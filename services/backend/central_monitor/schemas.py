@@ -11,12 +11,20 @@ class TenantCreate(BaseModel):
     timezone: str = "America/Sao_Paulo"
 
 
+class TenantUpdate(TenantCreate):
+    active: bool = True
+
+
 class AssetCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     kind: Literal["linux", "windows", "database", "network", "website", "api", "service", "other"]
     address: str | None = Field(default=None, max_length=500)
     criticality: Literal["low", "medium", "high", "critical"] = "medium"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetUpdate(AssetCreate):
+    active: bool = True
 
 
 class MonitorCreate(BaseModel):
@@ -46,6 +54,10 @@ class MonitorCreate(BaseModel):
         return self
 
 
+class MonitorUpdate(MonitorCreate):
+    active: bool = True
+
+
 class CustomEvent(BaseModel):
     event_id: str = Field(alias="eventId", min_length=1, max_length=200)
     source: str = Field(min_length=1, max_length=100)
@@ -59,6 +71,12 @@ class CustomEvent(BaseModel):
 class IncidentUpdate(BaseModel):
     status: Literal["acknowledged", "in_progress", "resolved", "ignored"]
     version: int = Field(ge=1)
+
+
+class AlertUpdate(BaseModel):
+    title: str = Field(min_length=2, max_length=240)
+    severity: Literal["info", "warning", "average", "high", "disaster"]
+    status: Literal["open", "resolved", "ignored"]
 
 
 class ActionExecutionRequest(BaseModel):

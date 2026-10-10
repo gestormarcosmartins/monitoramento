@@ -1,0 +1,13 @@
+.grid-wrap { width: 100%; overflow: auto; }
+.data-grid { min-width: 760px; }
+.sort-button { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: transparent; color: #657482; padding: 0; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.sort-button span { font-size: 10px; color: #9aa5ae; }
+.actions-heading { width: 260px; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+.row-actions button { border: 1px solid #cbd3d9; background: #fff; color: #263441; border-radius: 6px; padding: 7px 9px; font-size: 12px; }
+.row-actions button:hover { background: #eef2f5; }
+.row-actions .danger { border-color: #efc5c2; color: #a12f29; }
+.row-actions .danger:hover { background: #fff0ef; }
+.inactive-row { opacity: .62; background: #fafbfc; }
+.status.ativo { background: #d9f3e5; color: #176b42; }
+.status.inativo, .status.ignored { background: #eceff1; color: #647382; }

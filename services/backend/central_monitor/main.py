@@ -12,11 +12,15 @@ from .health import check_dependencies
 from .schemas import (
     ActionExecutionRequest,
     ActionGrantCreate,
+    AlertUpdate,
     AssetCreate,
+    AssetUpdate,
     CustomEvent,
     IncidentUpdate,
     MonitorCreate,
+    MonitorUpdate,
     TenantCreate,
+    TenantUpdate,
 )
 from .zabbix import ZabbixClient
 
@@ -82,9 +86,9 @@ def me(identity: Identity = Depends(current_identity)) -> dict[str, Any]:
         tenants = list(
             connection.execute(
                 """
-                SELECT t.id, t.name, t.slug, ut.role
+                SELECT t.id, t.name, t.slug, t.timezone, t.active, t.created_at, ut.role
                 FROM cm_user_tenants ut JOIN cm_tenants t ON t.id=ut.tenant_id
-                WHERE ut.user_id=%s AND t.active ORDER BY t.name
+                WHERE ut.user_id=%s ORDER BY t.name
                 """,
                 (user["id"],),
             ).fetchall()
@@ -119,6 +123,34 @@ def list_tenants(identity: Identity = Depends(current_identity)) -> list[dict[st
     return me(identity)["tenants"]
 
 
+@app.put("/api/v1/tenants/{tenant_id}", tags=["tenants"])
+def update_tenant(tenant_id: str, payload: TenantUpdate, identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    user = authorize_tenant(identity, tenant_id, ("admin",))
+    try:
+        with connect() as connection:
+            tenant = connection.execute(
+                """UPDATE cm_tenants SET name=%s,slug=%s,timezone=%s,active=%s
+                WHERE id=%s RETURNING *""",
+                (payload.name, payload.slug, payload.timezone, payload.active, tenant_id),
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'update','tenant',%s)",
+                (tenant_id, user["id"], tenant_id),
+            )
+            return tenant
+    except UniqueViolation as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tenant slug already exists") from error
+
+
+@app.delete("/api/v1/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["tenants"])
+def delete_tenant(tenant_id: str, identity: Identity = Depends(current_identity)) -> None:
+    authorize_tenant(identity, tenant_id, ("admin",))
+    with connect() as connection:
+        deleted = connection.execute("DELETE FROM cm_tenants WHERE id=%s RETURNING id", (tenant_id,)).fetchone()
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+
 @app.post("/api/v1/assets", status_code=status.HTTP_201_CREATED, tags=["assets"])
 def create_asset(payload: AssetCreate, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
@@ -150,6 +182,36 @@ def list_assets(active: bool | None = Query(default=None), tenant_id: str = Depe
         params += (active,)
     with tenant_connection(tenant_id) as connection:
         return list(connection.execute(query + " ORDER BY name", params).fetchall())
+
+
+@app.put("/api/v1/assets/{asset_id}", tags=["assets"])
+def update_asset(asset_id: str, payload: AssetUpdate, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
+    try:
+        with tenant_connection(tenant_id) as connection:
+            asset = connection.execute(
+                """UPDATE cm_assets SET name=%s,kind=%s,address=%s,criticality=%s,metadata=%s,active=%s
+                WHERE id=%s AND tenant_id=%s RETURNING *""",
+                (payload.name, payload.kind, payload.address, payload.criticality, Jsonb(payload.metadata), payload.active, asset_id, tenant_id),
+            ).fetchone()
+            if not asset:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+            connection.execute(
+                "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'update','asset',%s)",
+                (tenant_id, user["id"], asset_id),
+            )
+            return asset
+    except UniqueViolation as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Asset name already exists") from error
+
+
+@app.delete("/api/v1/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["assets"])
+def delete_asset(asset_id: str, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> None:
+    authorize_tenant(identity, tenant_id, ("admin",))
+    with tenant_connection(tenant_id) as connection:
+        deleted = connection.execute("DELETE FROM cm_assets WHERE id=%s AND tenant_id=%s RETURNING id", (asset_id, tenant_id)).fetchone()
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
 
 
 @app.post("/api/v1/monitors", status_code=status.HTTP_201_CREATED, tags=["monitors"])
@@ -188,6 +250,36 @@ def list_monitors(tenant_id: str = Depends(tenant_header), identity: Identity = 
         ).fetchall())
 
 
+@app.put("/api/v1/monitors/{monitor_id}", tags=["monitors"])
+def update_monitor(monitor_id: str, payload: MonitorUpdate, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
+    try:
+        with tenant_connection(tenant_id) as connection:
+            monitor = connection.execute(
+                """UPDATE cm_monitors SET asset_id=%s,name=%s,monitor_type=%s,configuration=%s,
+                interval_seconds=%s,severity=%s,active=%s WHERE id=%s AND tenant_id=%s RETURNING *""",
+                (payload.asset_id, payload.name, payload.monitor_type, Jsonb(payload.configuration), payload.interval_seconds, payload.severity, payload.active, monitor_id, tenant_id),
+            ).fetchone()
+            if not monitor:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitor not found")
+            connection.execute(
+                "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'update','monitor',%s)",
+                (tenant_id, user["id"], monitor_id),
+            )
+            return monitor
+    except UniqueViolation as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Monitor name already exists") from error
+
+
+@app.delete("/api/v1/monitors/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["monitors"])
+def delete_monitor(monitor_id: str, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> None:
+    authorize_tenant(identity, tenant_id, ("admin",))
+    with tenant_connection(tenant_id) as connection:
+        deleted = connection.execute("DELETE FROM cm_monitors WHERE id=%s AND tenant_id=%s RETURNING id", (monitor_id, tenant_id)).fetchone()
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitor not found")
+
+
 @app.post("/api/v1/events", status_code=status.HTTP_202_ACCEPTED, tags=["events"])
 def receive_event(payload: CustomEvent, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     authorize_tenant(identity, tenant_id, ("admin", "operator"))
@@ -216,6 +308,34 @@ def list_alerts(tenant_id: str = Depends(tenant_header), identity: Identity = De
         return list(connection.execute("SELECT * FROM cm_alerts WHERE tenant_id=%s ORDER BY opened_at DESC", (tenant_id,)).fetchall())
 
 
+@app.put("/api/v1/alerts/{alert_id}", tags=["alerts"])
+def update_alert(alert_id: str, payload: AlertUpdate, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
+    with tenant_connection(tenant_id) as connection:
+        alert = connection.execute(
+            """UPDATE cm_alerts SET title=%s,severity=%s,status=%s,
+            resolved_at=CASE WHEN %s='resolved' THEN now() ELSE NULL END
+            WHERE id=%s AND tenant_id=%s RETURNING *""",
+            (payload.title, payload.severity, payload.status, payload.status, alert_id, tenant_id),
+        ).fetchone()
+        if not alert:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+        connection.execute(
+            "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'update','alert',%s)",
+            (tenant_id, user["id"], alert_id),
+        )
+        return alert
+
+
+@app.delete("/api/v1/alerts/{alert_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["alerts"])
+def delete_alert(alert_id: str, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> None:
+    authorize_tenant(identity, tenant_id, ("admin",))
+    with tenant_connection(tenant_id) as connection:
+        deleted = connection.execute("DELETE FROM cm_alerts WHERE id=%s AND tenant_id=%s RETURNING id", (alert_id, tenant_id)).fetchone()
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+
+
 @app.get("/api/v1/incidents", tags=["incidents"])
 def list_incidents(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> list[dict[str, Any]]:
     authorize_tenant(identity, tenant_id)
@@ -239,6 +359,15 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
             (tenant_id, user["id"], incident_id, Jsonb({"status": payload.status})),
         )
         return incident
+
+
+@app.delete("/api/v1/incidents/{incident_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["incidents"])
+def delete_incident(incident_id: str, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> None:
+    authorize_tenant(identity, tenant_id, ("admin",))
+    with tenant_connection(tenant_id) as connection:
+        deleted = connection.execute("DELETE FROM cm_incidents WHERE id=%s AND tenant_id=%s RETURNING id", (incident_id, tenant_id)).fetchone()
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
 
 @app.get("/api/v1/integrations/zabbix/status", tags=["integrations"])
