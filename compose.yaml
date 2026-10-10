@@ -1,0 +1,156 @@
+name: central-monitor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: platform_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      CENTRAL_DB_PASSWORD: ${CENTRAL_DB_PASSWORD}
+      ZABBIX_DB_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform_admin -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  api:
+    build: ./services/backend
+    restart: unless-stopped
+    command: ["uvicorn", "central_monitor.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: &backend-environment
+      CENTRAL_DATABASE_URL: postgresql://central_app:${CENTRAL_DB_PASSWORD}@postgres:5432/central_monitor
+      REDIS_URL: redis://redis:6379/0
+      CENTRAL_SECRET_KEY: ${CENTRAL_SECRET_KEY}
+      ZABBIX_API_URL: ${ZABBIX_API_URL}
+      ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [private]
+
+  worker:
+    build: ./services/backend
+    restart: unless-stopped
+    command: ["python", "-m", "central_monitor.worker"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [private]
+
+  action-orchestrator:
+    build: ./services/backend
+    restart: unless-stopped
+    command: ["uvicorn", "central_monitor.orchestrator:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [private]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    restart: unless-stopped
+    command: ["start-dev", "--http-relative-path=/auth"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak_app
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [private]
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.4-latest
+    restart: unless-stopped
+    environment:
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix_app
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      ZBX_STARTPOLLERS: 5
+      ZBX_CACHESIZE: 128M
+      ZBX_HISTORYCACHESIZE: 64M
+      ZBX_TRENDCACHESIZE: 32M
+      ZBX_VALUECACHESIZE: 64M
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [private]
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.4-latest
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: postgres
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix_app
+      POSTGRES_PASSWORD: ${ZABBIX_DB_PASSWORD}
+      PHP_TZ: America/Sao_Paulo
+    depends_on:
+      - zabbix-server
+    networks: [private]
+
+  gateway:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      zabbix-web:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    networks: [private]
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  private:
+    driver: bridge
+
