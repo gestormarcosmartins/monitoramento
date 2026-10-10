@@ -10,7 +10,8 @@ MVP multiempresa de monitoramento para os cinco clientes iniciais, dimensionado 
 - Monitores HTTP, TCP e dead-man de eventos; monitores Zabbix ficam delegados ao Zabbix.
 - Worker que agenda coletas, deduplica alertas, abre incidentes e resolve ambos na recuperacao.
 - Entrada idempotente de eventos customizados.
-- Zabbix Server 7.4 e console Zabbix Web.
+- Zabbix Server 7.4 como motor interno de monitoramento.
+- GLPI 11 como motor interno de incidentes, SLA e atendimento.
 - Keycloak 26.5 com realm e cliente PKCE importados.
 - Um PostgreSQL 17 com bases separadas para Central, Zabbix e Keycloak.
 - Redis, outbox transacional e trilha de auditoria.
@@ -29,7 +30,7 @@ O script cria `.env` com segredos aleatorios na primeira execucao e sobe toda a 
 
 - Central Monitor: `http://localhost:8090`
 - Documentacao da API: `http://localhost:8090/api/docs`
-- Zabbix: `http://localhost:8081` (`Admin` / `zabbix` no primeiro acesso)
+- Zabbix e GLPI nao possuem portas publicadas; sao acessados apenas pela API do Nexora na rede privada.
 - Keycloak Admin: `http://localhost:8090/auth/admin`
 
 O ambiente local exige login pelo Keycloak (`DEV_AUTH_BYPASS=false`). O primeiro administrador operacional deve ser criado no realm `central-monitor`. O bypass pode ser habilitado apenas temporariamente para diagnostico local. Antes de publicar na Oracle, ajuste o dominio no issuer/realm e use HTTPS.
@@ -71,8 +72,8 @@ Envie `X-Tenant-ID` e, no modo local, `X-Dev-User`. O `eventId` torna a recepcao
 - Tokens do Zabbix ficam somente no backend.
 - Series historicas permanecem no Zabbix; a Central armazena inventario, estados, alertas, incidentes e auditoria.
 - PostgreSQL e Redis nao publicam portas no host.
-- O console Zabbix esta ligado apenas ao localhost; na Oracle ele deve ficar atras de VPN, bastion ou allowlist.
+- Os consoles do Zabbix e GLPI nao sao expostos aos usuarios; manutencao excepcional deve ocorrer por acesso administrativo temporario e controlado.
 - O arquivo `.env` nao entra no Git.
 
-Antes da implantacao publica ainda sao obrigatorios: DNS e TLS, firewall/NSG da Oracle, backups testados, SMTP/webhook de notificacao e troca das credenciais iniciais do Zabbix e Keycloak.
+Antes da implantacao publica ainda sao obrigatorios: DNS e TLS, firewall/NSG da Oracle, backups testados, SMTP/webhook de notificacao e troca das credenciais iniciais do Zabbix, GLPI e Keycloak.
 

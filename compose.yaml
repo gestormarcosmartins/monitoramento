@@ -47,6 +47,9 @@ services:
       CENTRAL_SECRET_KEY: ${CENTRAL_SECRET_KEY}
       ZABBIX_API_URL: ${ZABBIX_API_URL}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
+      GLPI_API_URL: ${GLPI_API_URL:-http://glpi/apirest.php}
+      GLPI_APP_TOKEN: ${GLPI_APP_TOKEN:-}
+      GLPI_USER_TOKEN: ${GLPI_USER_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
@@ -152,11 +155,48 @@ services:
       PHP_TZ: America/Sao_Paulo
     depends_on:
       - zabbix-server
-    ports:
-      - "127.0.0.1:8081:8080"
     networks: [private]
     mem_limit: 512m
     cpus: 0.40
+
+  glpi-db:
+    image: mariadb:11.8
+    restart: unless-stopped
+    environment:
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: glpi
+      MARIADB_USER: glpi
+      MARIADB_PASSWORD: ${GLPI_DB_PASSWORD:-${CENTRAL_DB_PASSWORD}}
+    volumes:
+      - glpi-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks: [private]
+    mem_limit: 768m
+    cpus: 0.40
+
+  glpi:
+    image: glpi/glpi:11.0.7
+    restart: unless-stopped
+    environment:
+      GLPI_DB_HOST: glpi-db
+      GLPI_DB_PORT: "3306"
+      GLPI_DB_NAME: glpi
+      GLPI_DB_USER: glpi
+      GLPI_DB_PASSWORD: ${GLPI_DB_PASSWORD:-${CENTRAL_DB_PASSWORD}}
+      GLPI_CRONTAB_ENABLED: "1"
+      TZ: America/Sao_Paulo
+    volumes:
+      - glpi-data:/var/glpi
+    depends_on:
+      glpi-db:
+        condition: service_healthy
+    networks: [private]
+    mem_limit: 1024m
+    cpus: 0.60
 
   gateway:
     image: nginx:1.28-alpine
@@ -188,6 +228,8 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  glpi-db-data:
+  glpi-data:
 
 networks:
   private:
