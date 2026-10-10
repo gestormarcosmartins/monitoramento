@@ -104,3 +104,10 @@ nav button.active{background:linear-gradient(90deg,#0ea5e9 0,#2563ff 12%,#155ad6
   .panel{border-radius:10px}.data-grid td,.data-grid th{padding-inline:10px}
   .row-actions{justify-content:flex-start}.company-actions>div{flex-wrap:wrap}
 }
+.split-view.single{grid-template-columns:minmax(0,1fr)}
+.split-view.single>.panel{min-width:0;width:100%}
+.split-view.with-detail{grid-template-columns:minmax(0,1.25fr) minmax(360px,.75fr)}
+.database-workspace{display:grid;gap:16px;min-width:0}
+.database-heading{padding:0 4px}
+.database-frame{width:100%;height:calc(100vh - 245px);min-height:760px;border:1px solid var(--line);border-radius:16px;background:#0b1220}
+.button-link{display:inline-flex;align-items:center;justify-content:center;padding:12px 18px;border-radius:10px;background:#2563ff;color:#fff;text-decoration:none;font-weight:700}
