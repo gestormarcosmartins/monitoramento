@@ -299,6 +299,10 @@ def notification_settings(tenant_id:str=Depends(tenant_header),identity:Identity
 @router.put("/notification-settings")
 def update_notification_settings(payload:NotificationSettingsPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
     authorize(identity,tenant_id,("admin","manager"))
+    if payload.smtp_enabled and (not payload.smtp_host or not payload.smtp_from_address):
+        raise HTTPException(422,"Para habilitar o e-mail, informe o servidor SMTP e o e-mail remetente")
+    if payload.evolution_enabled and (not payload.evolution_api_url or not payload.evolution_instance):
+        raise HTTPException(422,"Para habilitar o WhatsApp, informe a URL da Evolution API e a instância")
     if payload.evolution_api_url and not payload.evolution_api_url.startswith(("http://","https://")):
         raise HTTPException(422,"A URL da Evolution API deve usar HTTP ou HTTPS")
     return save_notification_settings(tenant_id,payload.model_dump())

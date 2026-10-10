@@ -123,3 +123,9 @@ nav button.active{background:linear-gradient(90deg,#0ea5e9 0,#2563ff 12%,#155ad6
 .channel-actions{grid-column:1/-1;display:flex;justify-content:flex-end}
 .field-help{font-size:13px!important}
 @media(max-width:850px){.channel-form{grid-template-columns:1fr}}
+.toast{position:fixed;right:24px;bottom:24px;z-index:1000;width:min(430px,calc(100vw - 32px));display:grid;grid-template-columns:38px 1fr 28px;gap:12px;align-items:start;padding:16px;border-radius:12px;background:#fff;border:1px solid #b9dfca;box-shadow:0 16px 45px #10233b33;color:#153522;animation:toast-in .18s ease-out}
+.toast>span{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#dcf8e8;color:#138047;font-size:20px;font-weight:900}
+.toast strong{display:block;margin:1px 0 4px}.toast p{margin:0!important;color:#496454!important;line-height:1.4}
+.toast>button{border:0;background:transparent;color:#667681;font-size:22px;padding:0}
+.toast.error{border-color:#efb6b2;color:#7d211b}.toast.error>span{background:#fde2e0;color:#b52d24}.toast.error p{color:#8b4945!important}
+@keyframes toast-in{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
