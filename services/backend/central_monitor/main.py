@@ -123,6 +123,34 @@ def list_tenants(identity: Identity = Depends(current_identity)) -> list[dict[st
     return me(identity)["tenants"]
 
 
+@app.get("/api/v1/dashboard", tags=["dashboard"])
+def dashboard(identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    tenants = me(identity)["tenants"]
+    companies: list[dict[str, Any]] = []
+    totals = {"critical_alerts": 0, "attention_alerts": 0, "open_incidents": 0}
+    for tenant in tenants:
+        if not tenant["active"]:
+            continue
+        tenant_id = str(tenant["id"])
+        with tenant_connection(tenant_id) as connection:
+            metrics = connection.execute(
+                """SELECT
+                (SELECT count(*) FROM cm_assets WHERE tenant_id=%s AND active) AS environments,
+                (SELECT count(*) FROM cm_monitors WHERE tenant_id=%s AND active) AS services,
+                (SELECT count(*) FROM cm_alerts WHERE tenant_id=%s AND status='open' AND severity IN ('high','disaster')) AS critical_alerts,
+                (SELECT count(*) FROM cm_alerts WHERE tenant_id=%s AND status='open' AND severity IN ('warning','average')) AS attention_alerts,
+                (SELECT count(*) FROM cm_incidents WHERE tenant_id=%s AND status NOT IN ('resolved','ignored')) AS open_incidents""",
+                (tenant_id, tenant_id, tenant_id, tenant_id, tenant_id),
+            ).fetchone()
+        row = {"id": tenant["id"], "name": tenant["name"], "slug": tenant["slug"], **metrics}
+        row["open_alerts"] = row["critical_alerts"] + row["attention_alerts"]
+        companies.append(row)
+        for key in totals:
+            totals[key] += row[key]
+    totals["companies_with_alerts"] = sum(1 for company in companies if company["open_alerts"] > 0)
+    return {"totals": totals, "companies": companies}
+
+
 @app.put("/api/v1/tenants/{tenant_id}", tags=["tenants"])
 def update_tenant(tenant_id: str, payload: TenantUpdate, identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     user = authorize_tenant(identity, tenant_id, ("admin",))
