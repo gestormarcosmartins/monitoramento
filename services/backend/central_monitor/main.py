@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
@@ -9,6 +10,7 @@ from psycopg.types.json import Jsonb
 from .auth import Identity, current_identity, tenant_header
 from .db import connect, migrate, tenant_connection
 from .health import check_dependencies
+from .glpi import GlpiClient
 from .schemas import (
     ActionExecutionRequest,
     ActionGrantCreate,
@@ -376,7 +378,7 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
     user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
     with tenant_connection(tenant_id) as connection:
         incident = connection.execute(
-            """UPDATE cm_incidents SET status=%s,version=version+1,updated_at=now()
+            """UPDATE cm_incidents SET status=%s,version=version+1,updated_at=now(),sync_status='pending'
             WHERE id=%s AND tenant_id=%s AND version=%s RETURNING *""",
             (payload.status, incident_id, tenant_id, payload.version),
         ).fetchone()
@@ -385,6 +387,10 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
         connection.execute(
             "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id,details) VALUES (%s,%s,'update','incident',%s,%s)",
             (tenant_id, user["id"], incident_id, Jsonb({"status": payload.status})),
+        )
+        connection.execute(
+            "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.status_changed',%s)",
+            (tenant_id, Jsonb({"incident_id": incident_id, "status": payload.status})),
         )
         return incident
 
@@ -404,6 +410,15 @@ def zabbix_status(tenant_id: str = Depends(tenant_header), identity: Identity = 
     try:
         return ZabbixClient().status()
     except (RuntimeError, OSError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+@app.get("/api/v1/integrations/glpi/status", tags=["integrations"])
+def glpi_status(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    authorize_tenant(identity, tenant_id)
+    try:
+        return GlpiClient().status()
+    except (httpx.HTTPError, RuntimeError, OSError) as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
 
 

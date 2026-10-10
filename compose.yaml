@@ -50,6 +50,8 @@ services:
       GLPI_API_URL: ${GLPI_API_URL:-http://glpi/apirest.php}
       GLPI_APP_TOKEN: ${GLPI_APP_TOKEN:-}
       GLPI_USER_TOKEN: ${GLPI_USER_TOKEN:-}
+      GLPI_USERNAME: ${GLPI_USERNAME:-glpi}
+      GLPI_PASSWORD: ${GLPI_PASSWORD:-glpi}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
@@ -67,7 +69,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-    networks: [private]
+    networks:
+      private:
+        ipv4_address: 172.30.250.10
     mem_limit: 512m
     cpus: 0.50
 
@@ -79,7 +83,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    networks: [private]
+      glpi-bootstrap:
+        condition: service_completed_successfully
+    networks:
+      private:
+        ipv4_address: 172.30.250.11
     mem_limit: 512m
     cpus: 0.75
 
@@ -198,6 +206,23 @@ services:
     mem_limit: 1024m
     cpus: 0.60
 
+  glpi-bootstrap:
+    image: mariadb:11.8
+    restart: "no"
+    environment:
+      GLPI_DB_PASSWORD: ${GLPI_DB_PASSWORD:-${CENTRAL_DB_PASSWORD}}
+    volumes:
+      - ./infra/glpi/bootstrap.sh:/bootstrap.sh:ro
+    command: ["sh", "/bootstrap.sh"]
+    depends_on:
+      glpi-db:
+        condition: service_healthy
+      glpi:
+        condition: service_started
+    networks: [private]
+    mem_limit: 128m
+    cpus: 0.10
+
   gateway:
     image: nginx:1.28-alpine
     restart: unless-stopped
@@ -234,4 +259,7 @@ volumes:
 networks:
   private:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
 

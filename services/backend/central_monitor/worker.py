@@ -7,8 +7,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from psycopg.types.json import Jsonb
 
 from .db import connect, migrate, tenant_connection
+from .glpi import GlpiClient
 from .settings import get_settings
 
 logger = logging.getLogger("central-monitor-worker")
@@ -97,13 +99,19 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                 """,
                 (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message),
             ).fetchone()
-            connection.execute(
+            incident = connection.execute(
                 """
                 INSERT INTO cm_incidents(tenant_id,alert_id,title)
                 VALUES (%s,%s,%s) ON CONFLICT (tenant_id,alert_id) DO NOTHING
+                RETURNING id
                 """,
                 (tenant_id, alert["id"], alert["title"]),
-            )
+            ).fetchone()
+            if incident:
+                connection.execute(
+                    "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.created',%s)",
+                    (tenant_id, Jsonb({"incident_id": str(incident["id"])})),
+                )
         else:
             alerts = connection.execute(
                 """UPDATE cm_alerts SET status='resolved',resolved_at=now()
@@ -111,11 +119,16 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                 (tenant_id, alert_fingerprint),
             ).fetchall()
             for alert in alerts:
-                connection.execute(
-                    """UPDATE cm_incidents SET status='resolved',version=version+1,updated_at=now()
-                    WHERE tenant_id=%s AND alert_id=%s AND status NOT IN ('resolved','ignored')""",
+                incidents = connection.execute(
+                    """UPDATE cm_incidents SET status='resolved',version=version+1,updated_at=now(),sync_status='pending'
+                    WHERE tenant_id=%s AND alert_id=%s AND status NOT IN ('resolved','ignored') RETURNING id""",
                     (tenant_id, alert["id"]),
-                )
+                ).fetchall()
+                for incident in incidents:
+                    connection.execute(
+                        "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.status_changed',%s)",
+                        (tenant_id, Jsonb({"incident_id": str(incident["id"]), "status": "resolved"})),
+                    )
 
 
 def run_monitors() -> None:
@@ -142,18 +155,61 @@ def run_monitors() -> None:
                 logger.exception("monitor_check_failed", extra={"monitor_id": str(monitor["id"])})
 
 
+def sync_incident(tenant_id: str, incident_id: str) -> None:
+    with tenant_connection(tenant_id) as connection:
+        incident = connection.execute(
+            """SELECT i.*,a.severity,a.message,t.name AS tenant_name
+            FROM cm_incidents i JOIN cm_alerts a ON a.id=i.alert_id
+            JOIN cm_tenants t ON t.id=i.tenant_id
+            WHERE i.tenant_id=%s AND i.id=%s""",
+            (tenant_id, incident_id),
+        ).fetchone()
+    if not incident:
+        return
+    client = GlpiClient()
+    ticket_id = incident["glpi_ticket_id"]
+    if ticket_id is None:
+        ticket_id = client.create_ticket(incident)
+    client.update_ticket_status(int(ticket_id), incident["status"])
+    with tenant_connection(tenant_id) as connection:
+        connection.execute(
+            """UPDATE cm_incidents SET glpi_ticket_id=%s,sync_status='synced',sync_error=NULL,synced_at=now()
+            WHERE tenant_id=%s AND id=%s""",
+            (ticket_id, tenant_id, incident_id),
+        )
+
+
 def process_outbox() -> None:
     with connect() as connection:
         rows = list(
             connection.execute(
-                """SELECT id,topic FROM cm_outbox WHERE processed_at IS NULL
+                """SELECT id,tenant_id,topic,payload,attempts FROM cm_outbox WHERE processed_at IS NULL
                 AND topic <> 'action.validated'
+                AND attempts < 10
                 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 100"""
             ).fetchall()
         )
-        for row in rows:
+    for row in rows:
+        try:
+            if row["topic"] in ("incident.created", "incident.status_changed"):
+                sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
             logger.info("outbox_event", extra={"topic": row["topic"], "outbox_id": row["id"]})
-            connection.execute("UPDATE cm_outbox SET processed_at=now() WHERE id=%s", (row["id"],))
+            with connect() as connection:
+                connection.execute("UPDATE cm_outbox SET processed_at=now(),last_error=NULL WHERE id=%s", (row["id"],))
+        except Exception as error:
+            logger.exception("outbox_event_failed", extra={"topic": row["topic"], "outbox_id": row["id"]})
+            with connect() as connection:
+                connection.execute(
+                    "UPDATE cm_outbox SET attempts=attempts+1,last_error=%s WHERE id=%s",
+                    (str(error)[:1000], row["id"]),
+                )
+            if row["tenant_id"] and row["payload"].get("incident_id"):
+                with tenant_connection(str(row["tenant_id"])) as connection:
+                    connection.execute(
+                        """UPDATE cm_incidents SET sync_status='failed',sync_error=%s
+                        WHERE tenant_id=%s AND id=%s""",
+                        (str(error)[:1000], row["tenant_id"], row["payload"]["incident_id"]),
+                    )
 
 
 def main() -> None:

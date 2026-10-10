@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY central_monitor ./central_monitor
+COPY tests ./tests
 
 RUN useradd --create-home --uid 10001 appuser
 USER appuser

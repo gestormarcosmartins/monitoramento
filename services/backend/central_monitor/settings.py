@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     glpi_api_url: str = Field(default="http://glpi/apirest.php", alias="GLPI_API_URL")
     glpi_app_token: str = Field(default="", alias="GLPI_APP_TOKEN")
     glpi_user_token: str = Field(default="", alias="GLPI_USER_TOKEN")
+    glpi_username: str = Field(default="", alias="GLPI_USERNAME")
+    glpi_password: str = Field(default="", alias="GLPI_PASSWORD")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     oidc_issuer: str = Field(default="", alias="OIDC_ISSUER")
     oidc_jwks_url: str = Field(default="", alias="OIDC_JWKS_URL")

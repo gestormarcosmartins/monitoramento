@@ -12,6 +12,7 @@ MVP multiempresa de monitoramento para os cinco clientes iniciais, dimensionado 
 - Entrada idempotente de eventos customizados.
 - Zabbix Server 7.4 como motor interno de monitoramento.
 - GLPI 11 como motor interno de incidentes, SLA e atendimento.
+- Sincronizacao automatica de abertura, andamento e resolucao dos incidentes Nexora com chamados GLPI.
 - Keycloak 26.5 com realm e cliente PKCE importados.
 - Um PostgreSQL 17 com bases separadas para Central, Zabbix e Keycloak.
 - Redis, outbox transacional e trilha de auditoria.
@@ -73,6 +74,7 @@ Envie `X-Tenant-ID` e, no modo local, `X-Dev-User`. O `eventId` torna a recepcao
 - Series historicas permanecem no Zabbix; a Central armazena inventario, estados, alertas, incidentes e auditoria.
 - PostgreSQL e Redis nao publicam portas no host.
 - Os consoles do Zabbix e GLPI nao sao expostos aos usuarios; manutencao excepcional deve ocorrer por acesso administrativo temporario e controlado.
+- O worker usa uma fila transacional com retentativas para sincronizar incidentes com o GLPI sem bloquear as coletas.
 - O arquivo `.env` nao entra no Git.
 
 Antes da implantacao publica ainda sao obrigatorios: DNS e TLS, firewall/NSG da Oracle, backups testados, SMTP/webhook de notificacao e troca das credenciais iniciais do Zabbix, GLPI e Keycloak.

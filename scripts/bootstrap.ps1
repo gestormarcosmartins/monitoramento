@@ -18,6 +18,7 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
         "change-me-zabbix" = [guid]::NewGuid().ToString("N")
         "change-me-keycloak" = [guid]::NewGuid().ToString("N")
         "change-me-keycloak-admin" = [guid]::NewGuid().ToString("N")
+        "change-me-glpi" = [guid]::NewGuid().ToString("N")
         "change-me-with-at-least-32-random-characters" = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
     }
     foreach ($entry in $secrets.GetEnumerator()) {
@@ -32,5 +33,4 @@ docker compose --project-directory $ProjectRoot ps
 
 Write-Host ""
 Write-Host "Central Monitor: http://localhost:8090"
-Write-Host "Zabbix:         http://localhost:8081 (Admin / zabbix)"
 Write-Host "Keycloak:       http://localhost:8090/auth/admin"
