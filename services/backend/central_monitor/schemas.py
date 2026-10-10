@@ -30,7 +30,7 @@ class AssetUpdate(AssetCreate):
 class MonitorCreate(BaseModel):
     asset_id: UUID
     name: str = Field(min_length=2, max_length=160)
-    monitor_type: Literal["http", "tcp", "zabbix", "event_deadman"]
+    monitor_type: Literal["http", "tcp", "zabbix", "event_deadman", "push"]
     configuration: dict[str, Any]
     interval_seconds: int = Field(default=60, ge=30, le=86400)
     severity: Literal["info", "warning", "average", "high", "disaster"] = "warning"

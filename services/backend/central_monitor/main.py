@@ -26,6 +26,7 @@ from .schemas import (
 )
 from .zabbix import ZabbixClient
 from .operations import router as operations_router
+from .benner import router as benner_router
 
 
 @asynccontextmanager
@@ -42,6 +43,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(operations_router)
+app.include_router(benner_router)
 
 
 def ensure_user(identity: Identity) -> dict[str, Any]:

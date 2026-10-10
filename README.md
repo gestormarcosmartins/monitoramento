@@ -87,3 +87,15 @@ Envie `X-Tenant-ID` e, no modo local, `X-Dev-User`. O `eventId` torna a recepcao
 
 Antes da implantacao publica ainda sao obrigatorios: DNS e TLS, firewall/NSG da Oracle, backups testados, SMTP/webhook de notificacao e troca das credenciais iniciais do Zabbix, GLPI e Keycloak.
 
+## Integração Benner Health Monitor
+
+O endpoint `/api/v1/agents/benner/snapshots` recebe os 19 diagnósticos SQL Server, preserva os resultados, cria o ativo e seus monitores e transforma novas falhas em alertas, incidentes, SLA e chamados GLPI.
+
+Defina `BENNER_INGEST_TOKEN` no `.env`. Na primeira carga use `--historical` para não abrir incidentes retroativos:
+
+```powershell
+python tools/benner_shipper.py "..\benner_health_monitor\logs\archive" --tenant UUID_DA_EMPRESA --token SEU_TOKEN --historical
+```
+
+Nas coletas seguintes envie o novo JSON sem `--historical`. O endpoint é idempotente e ignora snapshots já recebidos.
+

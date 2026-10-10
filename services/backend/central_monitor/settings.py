@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
     monitor_interval_seconds: int = Field(default=30, ge=10, alias="MONITOR_INTERVAL_SECONDS")
     action_execution_enabled: bool = Field(default=False, alias="ACTION_EXECUTION_ENABLED")
+    benner_ingest_token: str = Field(default="", alias="BENNER_INGEST_TOKEN")
 
 
 @lru_cache

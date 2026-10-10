@@ -181,7 +181,7 @@ def run_monitors() -> None:
                 connection.execute(
                     """
                     SELECT * FROM cm_monitors
-                    WHERE tenant_id=%s AND active
+                    WHERE tenant_id=%s AND active AND monitor_type <> 'push'
                     AND NOT EXISTS (SELECT 1 FROM cm_maintenance_windows w
                         WHERE w.tenant_id=cm_monitors.tenant_id AND w.active
                         AND (w.asset_id IS NULL OR w.asset_id=cm_monitors.asset_id)

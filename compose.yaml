@@ -67,6 +67,7 @@ services:
       DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-30}
       ACTION_EXECUTION_ENABLED: ${ACTION_EXECUTION_ENABLED:-false}
+      BENNER_INGEST_TOKEN: ${BENNER_INGEST_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
