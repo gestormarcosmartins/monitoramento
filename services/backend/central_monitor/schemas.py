@@ -69,8 +69,16 @@ class CustomEvent(BaseModel):
 
 
 class IncidentUpdate(BaseModel):
-    status: Literal["acknowledged", "in_progress", "resolved", "ignored"]
+    status: Literal["new", "acknowledged", "in_progress", "waiting_customer", "waiting_supplier", "resolved", "closed", "ignored"]
     version: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=2, max_length=240)
+    description: str | None = None
+    priority: Literal["low", "medium", "high", "critical"] | None = None
+    category: str | None = Field(default=None, max_length=100)
+    assignee_user_id: UUID | None = None
+    assignee_team_id: UUID | None = None
+    supplier_id: UUID | None = None
+    supplier_protocol: str | None = Field(default=None, max_length=200)
 
 
 class AlertUpdate(BaseModel):

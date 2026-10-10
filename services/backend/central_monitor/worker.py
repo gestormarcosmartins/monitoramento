@@ -11,7 +11,10 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, migrate, tenant_connection
 from .glpi import GlpiClient
+from .notifications import deliver_notifications
 from .settings import get_settings
+from .sla import add_sla_minutes
+from .zabbix import ZabbixClient
 
 logger = logging.getLogger("central-monitor-worker")
 running = True
@@ -108,9 +111,35 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                 (tenant_id, alert["id"], alert["title"]),
             ).fetchone()
             if incident:
+                priority = {"info": "low", "warning": "medium", "average": "high", "high": "critical", "disaster": "critical"}.get(monitor["severity"], "medium")
+                policy = connection.execute(
+                    "SELECT * FROM cm_sla_policies WHERE tenant_id=%s AND priority=%s AND active",
+                    (tenant_id,priority),
+                ).fetchone()
+                response_minutes = policy["response_minutes"] if policy else 120
+                resolution_minutes = policy["resolution_minutes"] if policy else 1440
+                tenant=connection.execute("SELECT timezone FROM cm_tenants WHERE id=%s",(tenant_id,)).fetchone()
+                holidays={row["holiday_date"] for row in connection.execute("SELECT holiday_date FROM cm_holidays WHERE tenant_id=%s",(tenant_id,)).fetchall()}
+                now=datetime.now(UTC)
+                response_due=add_sla_minutes(now,response_minutes,policy or {"coverage":"24x7"},tenant["timezone"],holidays)
+                resolution_due=add_sla_minutes(now,resolution_minutes,policy or {"coverage":"24x7"},tenant["timezone"],holidays)
+                connection.execute(
+                    """UPDATE cm_incidents SET priority=%s,description=%s,
+                    response_due_at=%s,resolution_due_at=%s
+                    WHERE tenant_id=%s AND id=%s""",
+                    (priority,message,response_due,resolution_due,tenant_id,incident["id"]),
+                )
+                connection.execute(
+                    "INSERT INTO cm_incident_history(tenant_id,incident_id,event_type,details) VALUES (%s,%s,'incident.created',%s)",
+                    (tenant_id,incident["id"],Jsonb({"source":"monitoring","priority":priority})),
+                )
                 connection.execute(
                     "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.created',%s)",
                     (tenant_id, Jsonb({"incident_id": str(incident["id"])})),
+                )
+                connection.execute(
+                    "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
+                    (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.created"})),
                 )
         else:
             alerts = connection.execute(
@@ -126,8 +155,20 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                 ).fetchall()
                 for incident in incidents:
                     connection.execute(
+                        "UPDATE cm_incidents SET resolved_at=COALESCE(resolved_at,now()) WHERE tenant_id=%s AND id=%s",
+                        (tenant_id,incident["id"]),
+                    )
+                    connection.execute(
+                        "INSERT INTO cm_incident_history(tenant_id,incident_id,event_type,details) VALUES (%s,%s,'incident.resolved',%s)",
+                        (tenant_id,incident["id"],Jsonb({"source":"monitoring"})),
+                    )
+                    connection.execute(
                         "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.status_changed',%s)",
                         (tenant_id, Jsonb({"incident_id": str(incident["id"]), "status": "resolved"})),
+                    )
+                    connection.execute(
+                        "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
+                        (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.resolved"})),
                     )
 
 
@@ -141,6 +182,10 @@ def run_monitors() -> None:
                     """
                     SELECT * FROM cm_monitors
                     WHERE tenant_id=%s AND active
+                    AND NOT EXISTS (SELECT 1 FROM cm_maintenance_windows w
+                        WHERE w.tenant_id=cm_monitors.tenant_id AND w.active
+                        AND (w.asset_id IS NULL OR w.asset_id=cm_monitors.asset_id)
+                        AND now() BETWEEN w.starts_at AND w.ends_at)
                     AND (last_checked_at IS NULL OR last_checked_at + interval_seconds * interval '1 second' <= now())
                     ORDER BY last_checked_at NULLS FIRST LIMIT 50
                     """,
@@ -179,12 +224,55 @@ def sync_incident(tenant_id: str, incident_id: str) -> None:
         )
 
 
+def sync_incident_comment(tenant_id: str, incident_id: str, comment_id: str) -> None:
+    with tenant_connection(tenant_id) as connection:
+        row = connection.execute(
+            """SELECT i.glpi_ticket_id,c.body,c.is_internal FROM cm_incident_comments c
+            JOIN cm_incidents i ON i.id=c.incident_id WHERE c.tenant_id=%s AND c.incident_id=%s AND c.id=%s""",
+            (tenant_id,incident_id,comment_id),
+        ).fetchone()
+    if row and row["glpi_ticket_id"]:
+        GlpiClient().add_followup(int(row["glpi_ticket_id"]),row["body"],row["is_internal"])
+
+
+def provision_zabbix_monitor(tenant_id: str, monitor_id: str) -> None:
+    with tenant_connection(tenant_id) as connection:
+        monitor=connection.execute("""SELECT m.*,a.name AS asset_name FROM cm_monitors m JOIN cm_assets a ON a.id=m.asset_id
+        WHERE m.tenant_id=%s AND m.id=%s""",(tenant_id,monitor_id)).fetchone()
+    if not monitor or monitor["monitor_type"] != "http" or monitor["configuration"].get("zabbix_item_id"):
+        return
+    result=ZabbixClient().provision_http_monitor(str(monitor["asset_id"]),monitor["asset_name"],monitor_id,monitor["name"],monitor["configuration"]["url"])
+    with tenant_connection(tenant_id) as connection:
+        connection.execute("UPDATE cm_monitors SET configuration=configuration || %s WHERE tenant_id=%s AND id=%s",(Jsonb({"zabbix_host_id":result["host_id"],"zabbix_item_id":result["item_id"]}),tenant_id,monitor_id))
+
+
+def execute_approved_action(tenant_id: str, execution_id: str) -> None:
+    settings=get_settings()
+    with tenant_connection(tenant_id) as connection:
+        execution=connection.execute("""SELECT e.*,d.code,a.name AS asset_name FROM cm_action_executions e
+        JOIN cm_action_definitions d ON d.id=e.action_id JOIN cm_assets a ON a.id=e.asset_id
+        WHERE e.tenant_id=%s AND e.id=%s""",(tenant_id,execution_id)).fetchone()
+        if not execution or execution["status"] not in ("validated","requested"): return
+        connection.execute("UPDATE cm_action_executions SET status='running' WHERE tenant_id=%s AND id=%s",(tenant_id,execution_id))
+        if execution["code"] == "collect_diagnostics":
+            monitors=list(connection.execute("SELECT name,last_status,last_message,last_checked_at FROM cm_monitors WHERE tenant_id=%s AND asset_id=%s",(tenant_id,execution["asset_id"])).fetchall())
+            result={"asset":execution["asset_name"],"monitors":monitors,"collected_at":datetime.now(UTC).isoformat()}
+            final_status="succeeded"
+        elif settings.action_execution_enabled:
+            result={"message":"Action approved; remote agent adapter is required for this asset","executed":False}
+            final_status="failed"
+        else:
+            result={"message":"Execution disabled by platform safety policy","executed":False}
+            final_status="rejected"
+        connection.execute("UPDATE cm_action_executions SET status=%s,result=%s,finished_at=now() WHERE tenant_id=%s AND id=%s",(final_status,Jsonb(result),tenant_id,execution_id))
+        connection.execute("INSERT INTO cm_audit_log(tenant_id,action,object_type,object_id,details) VALUES (%s,'action.finished','action_execution',%s,%s)",(tenant_id,execution_id,Jsonb({"status":final_status})))
+
+
 def process_outbox() -> None:
     with connect() as connection:
         rows = list(
             connection.execute(
                 """SELECT id,tenant_id,topic,payload,attempts FROM cm_outbox WHERE processed_at IS NULL
-                AND topic <> 'action.validated'
                 AND attempts < 10
                 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 100"""
             ).fetchall()
@@ -193,6 +281,14 @@ def process_outbox() -> None:
         try:
             if row["topic"] in ("incident.created", "incident.status_changed"):
                 sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
+            elif row["topic"] == "incident.comment_created":
+                sync_incident_comment(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["comment_id"])
+            elif row["topic"] == "notification.requested":
+                deliver_notifications(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["event"])
+            elif row["topic"] == "monitor.created":
+                provision_zabbix_monitor(str(row["tenant_id"]),row["payload"]["monitor_id"])
+            elif row["topic"] == "action.validated":
+                execute_approved_action(str(row["tenant_id"]),row["payload"]["execution_id"])
             logger.info("outbox_event", extra={"topic": row["topic"], "outbox_id": row["id"]})
             with connect() as connection:
                 connection.execute("UPDATE cm_outbox SET processed_at=now(),last_error=NULL WHERE id=%s", (row["id"],))
@@ -203,7 +299,7 @@ def process_outbox() -> None:
                     "UPDATE cm_outbox SET attempts=attempts+1,last_error=%s WHERE id=%s",
                     (str(error)[:1000], row["id"]),
                 )
-            if row["tenant_id"] and row["payload"].get("incident_id"):
+            if row["topic"].startswith("incident.") and row["tenant_id"] and row["payload"].get("incident_id"):
                 with tenant_connection(str(row["tenant_id"])) as connection:
                     connection.execute(
                         """UPDATE cm_incidents SET sync_status='failed',sync_error=%s

@@ -47,11 +47,19 @@ services:
       CENTRAL_SECRET_KEY: ${CENTRAL_SECRET_KEY}
       ZABBIX_API_URL: ${ZABBIX_API_URL}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
+      ZABBIX_USERNAME: ${ZABBIX_USERNAME:-Admin}
+      ZABBIX_PASSWORD: ${ZABBIX_PASSWORD:-zabbix}
       GLPI_API_URL: ${GLPI_API_URL:-http://glpi/apirest.php}
       GLPI_APP_TOKEN: ${GLPI_APP_TOKEN:-}
       GLPI_USER_TOKEN: ${GLPI_USER_TOKEN:-}
       GLPI_USERNAME: ${GLPI_USERNAME:-glpi}
       GLPI_PASSWORD: ${GLPI_PASSWORD:-glpi}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@nexora.local}
+      SMTP_TLS: ${SMTP_TLS:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
@@ -262,4 +270,5 @@ networks:
     ipam:
       config:
         - subnet: 172.30.250.0/24
+          ip_range: 172.30.250.128/25
 

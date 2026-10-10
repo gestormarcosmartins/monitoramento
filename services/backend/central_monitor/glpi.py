@@ -57,6 +57,10 @@ class GlpiClient:
         glpi_status = {"new": 1, "acknowledged": 2, "in_progress": 2, "resolved": 5, "ignored": 6}[status]
         self._request("PUT", f"Ticket/{ticket_id}", {"input": {"id": ticket_id, "status": glpi_status}})
 
+    def add_followup(self, ticket_id: int, body: str, private: bool = False) -> int:
+        result = self._request("POST", "ITILFollowup", {"input": {"itemtype": "Ticket", "items_id": ticket_id, "content": body, "is_private": int(private)}})
+        return int(result["id"])
+
     def status(self) -> dict[str, Any]:
         token = self._session()
         headers = {**self._base_headers(), "Session-Token": token}

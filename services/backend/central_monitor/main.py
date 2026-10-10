@@ -25,6 +25,7 @@ from .schemas import (
     TenantUpdate,
 )
 from .zabbix import ZabbixClient
+from .operations import router as operations_router
 
 
 @asynccontextmanager
@@ -40,6 +41,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+app.include_router(operations_router)
 
 
 def ensure_user(identity: Identity) -> dict[str, Any]:
@@ -110,6 +112,13 @@ def create_tenant(payload: TenantCreate, identity: Identity = Depends(current_id
             connection.execute(
                 "INSERT INTO cm_user_tenants(user_id,tenant_id,role) VALUES (%s,%s,'admin')",
                 (user["id"], tenant["id"]),
+            )
+            connection.execute(
+                """INSERT INTO cm_sla_policies(tenant_id,name,priority,response_minutes,resolution_minutes) VALUES
+                (%s,'SLA Baixo','low',240,2880),(%s,'SLA Médio','medium',120,1440),
+                (%s,'SLA Alto','high',30,480),(%s,'SLA Crítico','critical',15,240)
+                ON CONFLICT (tenant_id,priority) DO NOTHING""",
+                (tenant["id"],tenant["id"],tenant["id"],tenant["id"]),
             )
             connection.execute(
                 "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'create','tenant',%s)",
@@ -378,9 +387,24 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
     user = authorize_tenant(identity, tenant_id, ("admin", "operator"))
     with tenant_connection(tenant_id) as connection:
         incident = connection.execute(
-            """UPDATE cm_incidents SET status=%s,version=version+1,updated_at=now(),sync_status='pending'
+            """UPDATE cm_incidents SET status=%s,title=COALESCE(%s,title),description=COALESCE(%s,description),
+            priority=COALESCE(%s,priority),category=COALESCE(%s,category),
+            assignee_user_id=COALESCE(%s,assignee_user_id),assignee_team_id=COALESCE(%s,assignee_team_id),
+            supplier_id=COALESCE(%s,supplier_id),supplier_protocol=COALESCE(%s,supplier_protocol),
+            first_response_at=CASE WHEN %s IN ('acknowledged','in_progress') THEN COALESCE(first_response_at,now()) ELSE first_response_at END,
+            acknowledged_at=CASE WHEN %s='acknowledged' THEN COALESCE(acknowledged_at,now()) ELSE acknowledged_at END,
+            resolved_at=CASE WHEN %s='resolved' THEN COALESCE(resolved_at,now()) ELSE resolved_at END,
+            closed_at=CASE WHEN %s='closed' THEN COALESCE(closed_at,now()) ELSE closed_at END,
+            response_due_at=CASE WHEN sla_paused_at IS NOT NULL AND %s NOT IN ('waiting_customer','waiting_supplier') THEN response_due_at+(now()-sla_paused_at) ELSE response_due_at END,
+            resolution_due_at=CASE WHEN sla_paused_at IS NOT NULL AND %s NOT IN ('waiting_customer','waiting_supplier') THEN resolution_due_at+(now()-sla_paused_at) ELSE resolution_due_at END,
+            sla_paused_seconds=sla_paused_seconds+CASE WHEN sla_paused_at IS NOT NULL AND %s NOT IN ('waiting_customer','waiting_supplier') THEN EXTRACT(EPOCH FROM (now()-sla_paused_at))::bigint ELSE 0 END,
+            sla_paused_at=CASE WHEN %s IN ('waiting_customer','waiting_supplier') THEN COALESCE(sla_paused_at,now()) ELSE NULL END,
+            version=version+1,updated_at=now(),sync_status='pending'
             WHERE id=%s AND tenant_id=%s AND version=%s RETURNING *""",
-            (payload.status, incident_id, tenant_id, payload.version),
+            (payload.status,payload.title,payload.description,payload.priority,payload.category,
+             payload.assignee_user_id,payload.assignee_team_id,payload.supplier_id,payload.supplier_protocol,
+             payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,
+             incident_id,tenant_id,payload.version),
         ).fetchone()
         if not incident:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Incident version conflict or not found")
@@ -389,9 +413,23 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
             (tenant_id, user["id"], incident_id, Jsonb({"status": payload.status})),
         )
         connection.execute(
+            "INSERT INTO cm_incident_history(tenant_id,incident_id,actor_id,event_type,details) VALUES (%s,%s,%s,'incident.updated',%s)",
+            (tenant_id,incident_id,user["id"],Jsonb(payload.model_dump(mode="json",exclude_none=True))),
+        )
+        connection.execute(
             "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.status_changed',%s)",
             (tenant_id, Jsonb({"incident_id": incident_id, "status": payload.status})),
         )
+        connection.execute(
+            "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
+            (tenant_id,Jsonb({"incident_id":incident_id,"event":f"incident.{payload.status}"})),
+        )
+        if payload.supplier_id:
+            connection.execute(
+                """UPDATE cm_incidents i SET supplier_due_at=now()+(s.resolution_minutes*interval '1 minute')
+                FROM cm_suppliers s WHERE i.tenant_id=%s AND i.id=%s AND s.tenant_id=i.tenant_id AND s.id=i.supplier_id""",
+                (tenant_id,incident_id),
+            )
         return incident
 
 
@@ -411,6 +449,15 @@ def zabbix_status(tenant_id: str = Depends(tenant_header), identity: Identity = 
         return ZabbixClient().status()
     except (RuntimeError, OSError) as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+@app.get("/api/v1/integrations/zabbix/problems", tags=["integrations"])
+def zabbix_problems(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> list[dict[str, Any]]:
+    authorize_tenant(identity, tenant_id)
+    try:
+        return ZabbixClient().problems()
+    except (httpx.HTTPError,RuntimeError,OSError) as error:
+        raise HTTPException(status_code=503,detail=str(error)) from error
 
 
 @app.get("/api/v1/integrations/glpi/status", tags=["integrations"])
