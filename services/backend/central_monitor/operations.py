@@ -14,6 +14,7 @@ from reportlab.pdfgen import canvas
 
 from .auth import Identity, current_identity, tenant_header
 from .db import connect, tenant_connection
+from .notifications import get_notification_settings, save_notification_settings, send_email, send_whatsapp
 
 router = APIRouter(prefix="/api/v1", tags=["operations"])
 ROLES = ("admin", "manager", "operator", "viewer", "client", "auditor")
@@ -68,11 +69,33 @@ class TeamPayload(BaseModel):
 
 class NotificationRulePayload(BaseModel):
     name: str = Field(min_length=2, max_length=160)
-    channel: Literal["email", "webhook"]
+    channel: Literal["email", "whatsapp", "webhook"]
     target: str = Field(min_length=3, max_length=1000)
     minimum_priority: Literal["low", "medium", "high", "critical"] = "high"
     events: list[str] = Field(default_factory=lambda: ["incident.created"])
     active: bool = True
+
+
+class NotificationSettingsPayload(BaseModel):
+    smtp_enabled: bool = False
+    smtp_host: str | None = Field(default=None, max_length=500)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = Field(default=None, max_length=500)
+    smtp_password: str | None = Field(default=None, max_length=2000)
+    smtp_from_address: EmailStr | None = None
+    smtp_tls: bool = True
+    evolution_enabled: bool = False
+    evolution_api_url: str | None = Field(default=None, max_length=1000)
+    evolution_api_key: str | None = Field(default=None, max_length=2000)
+    evolution_instance: str | None = Field(default=None, max_length=300)
+
+
+class TestEmailPayload(BaseModel):
+    target: EmailStr
+
+
+class TestWhatsappPayload(BaseModel):
+    target: str = Field(min_length=10, max_length=30)
 
 
 class MaintenancePayload(BaseModel):
@@ -265,6 +288,36 @@ def update_notification_rule(item_id:str,payload:NotificationRulePayload,tenant_
 def delete_notification_rule(item_id:str,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->None:
     authorize(identity,tenant_id,("admin",))
     with tenant_connection(tenant_id) as c: c.execute("DELETE FROM cm_notification_rules WHERE tenant_id=%s AND id=%s",(tenant_id,item_id))
+
+
+@router.get("/notification-settings")
+def notification_settings(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
+    authorize(identity,tenant_id,("admin","manager"))
+    return get_notification_settings(tenant_id)
+
+
+@router.put("/notification-settings")
+def update_notification_settings(payload:NotificationSettingsPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
+    authorize(identity,tenant_id,("admin","manager"))
+    if payload.evolution_api_url and not payload.evolution_api_url.startswith(("http://","https://")):
+        raise HTTPException(422,"A URL da Evolution API deve usar HTTP ou HTTPS")
+    return save_notification_settings(tenant_id,payload.model_dump())
+
+
+@router.post("/notification-settings/test-email")
+def test_email(payload:TestEmailPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,str]:
+    authorize(identity,tenant_id,("admin","manager"))
+    try: send_email(tenant_id,str(payload.target),"Teste Nexora","Configuração de e-mail validada com sucesso.")
+    except Exception as error: raise HTTPException(502,f"Falha no teste de e-mail: {error}") from error
+    return {"message":"E-mail de teste enviado"}
+
+
+@router.post("/notification-settings/test-whatsapp")
+def test_whatsapp(payload:TestWhatsappPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,str]:
+    authorize(identity,tenant_id,("admin","manager"))
+    try: send_whatsapp(tenant_id,payload.target,"Teste Nexora: configuração de WhatsApp validada com sucesso.")
+    except Exception as error: raise HTTPException(502,f"Falha no teste de WhatsApp: {error}") from error
+    return {"message":"WhatsApp de teste enviado"}
 
 
 @router.get("/maintenance-windows")
