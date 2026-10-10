@@ -32,7 +32,7 @@ O script cria `.env` com segredos aleatorios na primeira execucao e sobe toda a 
 - Zabbix: `http://localhost:8081` (`Admin` / `zabbix` no primeiro acesso)
 - Keycloak Admin: `http://localhost:8090/auth/admin`
 
-O ambiente local inicia com `DEV_AUTH_BYPASS=true`, portanto o painel pode ser testado sem login. Antes de publicar na Oracle, altere para `false`, ajuste o dominio no issuer/realm e use HTTPS.
+O ambiente local exige login pelo Keycloak (`DEV_AUTH_BYPASS=false`). O primeiro administrador operacional deve ser criado no realm `central-monitor`. O bypass pode ser habilitado apenas temporariamente para diagnostico local. Antes de publicar na Oracle, ajuste o dominio no issuer/realm e use HTTPS.
 
 Para zerar apenas os dados desta Central e recriar os volumes:
 

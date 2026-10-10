@@ -16,8 +16,8 @@ class Identity:
 
 
 @lru_cache
-def jwks_client(issuer: str) -> PyJWKClient:
-    return PyJWKClient(f"{issuer.rstrip('/')}/protocol/openid-connect/certs")
+def jwks_client(url: str) -> PyJWKClient:
+    return PyJWKClient(url)
 
 
 def current_identity(
@@ -41,14 +41,20 @@ def current_identity(
 
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        signing_key = jwks_client(settings.oidc_issuer).get_signing_key_from_jwt(token)
+        jwks_url = settings.oidc_jwks_url or f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/certs"
+        signing_key = jwks_client(jwks_url).get_signing_key_from_jwt(token)
         claims = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
-            audience=settings.oidc_audience,
             issuer=settings.oidc_issuer,
+            options={"verify_aud": False},
         )
+        audiences = claims.get("aud", [])
+        if isinstance(audiences, str):
+            audiences = [audiences]
+        if settings.oidc_audience not in audiences and claims.get("azp") != settings.oidc_audience:
+            raise jwt.InvalidAudienceError("Token was not issued for this client")
     except jwt.PyJWTError as error:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from error
 

@@ -49,6 +49,7 @@ services:
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
+      OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
       OIDC_AUDIENCE: central-monitor
       DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-30}
