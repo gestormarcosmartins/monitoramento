@@ -1,0 +1,21 @@
+{
+  "realm": "central-monitor",
+  "enabled": true,
+  "displayName": "Central Monitor",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "central-monitor",
+      "name": "Central Monitor Web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:8090/*"],
+      "webOrigins": ["http://localhost:8090"],
+      "attributes": {"pkce.code.challenge.method": "S256"}
+    }
+  ]
+}

@@ -3,7 +3,7 @@ from enum import StrEnum
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Central Monitor Action Orchestrator", version="0.1.0")
+app = FastAPI(title="Central Monitor Action Orchestrator", version="0.2.0")
 
 
 class ActionType(StrEnum):
@@ -26,8 +26,8 @@ def live() -> dict[str, str]:
 
 @app.post("/internal/actions/validate", tags=["actions"])
 def validate_action(request: ActionRequest) -> dict[str, str]:
-    # Execution remains disabled until grants, MFA context, cooldown and audit
-    # persistence are implemented. This endpoint only validates the closed catalog.
+    # The public API persists grants, cooldown, rate limit and audit. This internal
+    # boundary intentionally accepts only the closed catalog and never a command.
     if request.action not in ActionType:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
     return {

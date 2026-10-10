@@ -19,6 +19,8 @@ services:
       timeout: 5s
       retries: 10
     networks: [private]
+    mem_limit: 1g
+    cpus: 0.60
 
   redis:
     image: redis:7.4-alpine
@@ -32,6 +34,8 @@ services:
       timeout: 5s
       retries: 10
     networks: [private]
+    mem_limit: 384m
+    cpus: 0.25
 
   api:
     build: ./services/backend
@@ -44,6 +48,11 @@ services:
       ZABBIX_API_URL: ${ZABBIX_API_URL}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
+      OIDC_AUDIENCE: central-monitor
+      DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
+      MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-30}
+      ACTION_EXECUTION_ENABLED: ${ACTION_EXECUTION_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,6 +64,8 @@ services:
       timeout: 5s
       retries: 5
     networks: [private]
+    mem_limit: 512m
+    cpus: 0.50
 
   worker:
     build: ./services/backend
@@ -62,11 +73,11 @@ services:
     command: ["python", "-m", "central_monitor.worker"]
     environment: *backend-environment
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
+      api:
         condition: service_healthy
     networks: [private]
+    mem_limit: 512m
+    cpus: 0.75
 
   action-orchestrator:
     build: ./services/backend
@@ -74,16 +85,21 @@ services:
     command: ["uvicorn", "central_monitor.orchestrator:app", "--host", "0.0.0.0", "--port", "8001"]
     environment: *backend-environment
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     networks: [private]
+    mem_limit: 256m
+    cpus: 0.25
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.5
     restart: unless-stopped
-    command: ["start-dev", "--http-relative-path=/auth"]
+    command: ["start-dev", "--http-relative-path=/auth", "--import-realm"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -93,10 +109,15 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: -Xms256m -Xmx1024m
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
     networks: [private]
+    mem_limit: 1536m
+    cpus: 0.75
 
   zabbix-server:
     image: zabbix/zabbix-server-pgsql:alpine-7.4-latest
@@ -115,6 +136,8 @@ services:
       postgres:
         condition: service_healthy
     networks: [private]
+    mem_limit: 1536m
+    cpus: 0.75
 
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.4-latest
@@ -128,23 +151,38 @@ services:
       PHP_TZ: America/Sao_Paulo
     depends_on:
       - zabbix-server
+    ports:
+      - "127.0.0.1:8081:8080"
     networks: [private]
+    mem_limit: 512m
+    cpus: 0.40
 
   gateway:
     image: nginx:1.28-alpine
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:${CENTRAL_HTTP_PORT:-8090}:80"
     volumes:
       - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       api:
         condition: service_healthy
+      web:
+        condition: service_started
       zabbix-web:
         condition: service_started
       keycloak:
         condition: service_started
     networks: [private]
+    mem_limit: 128m
+    cpus: 0.15
+
+  web:
+    build: ./services/web
+    restart: unless-stopped
+    networks: [private]
+    mem_limit: 128m
+    cpus: 0.15
 
 volumes:
   postgres-data:
