@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    central_public_url: str = Field(default="http://localhost:8090", alias="CENTRAL_PUBLIC_URL")
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
 
     central_database_url: str = Field(alias="CENTRAL_DATABASE_URL")

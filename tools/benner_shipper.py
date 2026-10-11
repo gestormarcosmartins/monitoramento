@@ -1,6 +1,7 @@
 """Envia snapshots do Benner Health Monitor para a API Nexora."""
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -22,9 +23,9 @@ def send(path: Path, url: str, tenant: str, token: str, historical: bool) -> str
 def main() -> int:
     parser = argparse.ArgumentParser(description="Integra o Benner Health Monitor ao Nexora")
     parser.add_argument("archive", type=Path, help="Pasta logs/archive ou um snapshot JSON")
-    parser.add_argument("--url", default="http://127.0.0.1:8090")
-    parser.add_argument("--tenant", required=True)
-    parser.add_argument("--token", required=True)
+    parser.add_argument("--url", default=os.getenv("NEXORA_SERVER_URL", "http://localhost:8090"))
+    parser.add_argument("--tenant", default=os.getenv("NEXORA_TENANT_ID"), required=not os.getenv("NEXORA_TENANT_ID"))
+    parser.add_argument("--token", default=os.getenv("NEXORA_AGENT_TOKEN"), required=not os.getenv("NEXORA_AGENT_TOKEN"))
     parser.add_argument("--historical", action="store_true")
     args = parser.parse_args()
     files = [args.archive] if args.archive.is_file() else sorted(args.archive.rglob("benner_health_*.json"))

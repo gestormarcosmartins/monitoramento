@@ -32,5 +32,6 @@ docker compose --project-directory $ProjectRoot up --build -d
 docker compose --project-directory $ProjectRoot ps
 
 Write-Host ""
-Write-Host "Central Monitor: http://localhost:8090"
-Write-Host "Keycloak:       http://localhost:8090/auth/admin"
+$publicUrl = if ($env:CENTRAL_PUBLIC_URL) { $env:CENTRAL_PUBLIC_URL.TrimEnd('/') } else { "http://localhost:8090" }
+Write-Host "Central Monitor: $publicUrl"
+Write-Host "Keycloak:       $publicUrl/auth/admin"

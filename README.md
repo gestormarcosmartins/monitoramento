@@ -99,3 +99,30 @@ python tools/benner_shipper.py "..\benner_health_monitor\logs\archive" --tenant 
 
 Nas coletas seguintes envie o novo JSON sem `--historical`. O endpoint é idempotente e ignora snapshots já recebidos.
 
+# Endereços parametrizáveis
+
+Nenhum agente precisa ser recompilado quando a Central mudar de endereço. Configure no `.env`:
+
+```env
+# Ambiente local
+CENTRAL_PUBLIC_URL=http://localhost:8090
+CENTRAL_BIND_ADDRESS=127.0.0.1
+CENTRAL_HTTP_PORT=8090
+BENNER_MONITOR_UPSTREAM=http://host.docker.internal:8091
+OIDC_ISSUER=http://localhost:8090/auth/realms/central-monitor
+```
+
+Na Oracle, altere somente os valores, por exemplo:
+
+```env
+CENTRAL_PUBLIC_URL=https://monitoramento.seudominio.com.br
+CENTRAL_BIND_ADDRESS=0.0.0.0
+CENTRAL_HTTP_PORT=8090
+BENNER_MONITOR_UPSTREAM=http://endereco-interno-do-monitor:8091
+OIDC_ISSUER=https://monitoramento.seudominio.com.br/auth/realms/central-monitor
+```
+
+O futuro agente e o transportador atual usam as variáveis `NEXORA_SERVER_URL`,
+`NEXORA_TENANT_ID` e `NEXORA_AGENT_TOKEN`. Os argumentos de linha de comando
+continuam disponíveis para sobrescrever esses valores quando necessário.
+

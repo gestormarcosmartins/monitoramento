@@ -20,7 +20,7 @@ server {
     }
 
     location /db-monitor/api/ {
-        proxy_pass http://host.docker.internal:8091/api/;
+        proxy_pass ${BENNER_MONITOR_UPSTREAM}/api/;
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 420s;
@@ -29,7 +29,7 @@ server {
     }
 
     location /db-monitor/ {
-        proxy_pass http://host.docker.internal:8091/;
+        proxy_pass ${BENNER_MONITOR_UPSTREAM}/;
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 420s;
@@ -38,16 +38,7 @@ server {
         sub_filter '/api/' '/db-monitor/api/';
     }
 
-    location = / {
-        proxy_pass http://web:80/;
-    }
-
-    location /assets/ {
-        proxy_pass http://web:80/assets/;
-    }
-
-    location / {
-        proxy_pass http://web:80;
-    }
+    location = / { proxy_pass http://web:80/; }
+    location /assets/ { proxy_pass http://web:80/assets/; }
+    location / { proxy_pass http://web:80; }
 }
-

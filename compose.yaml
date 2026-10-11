@@ -45,6 +45,7 @@ services:
       CENTRAL_DATABASE_URL: postgresql://central_app:${CENTRAL_DB_PASSWORD}@postgres:5432/central_monitor
       REDIS_URL: redis://redis:6379/0
       CENTRAL_SECRET_KEY: ${CENTRAL_SECRET_KEY}
+      CENTRAL_PUBLIC_URL: ${CENTRAL_PUBLIC_URL:-http://localhost:8090}
       ZABBIX_API_URL: ${ZABBIX_API_URL}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN}
       ZABBIX_USERNAME: ${ZABBIX_USERNAME:-Admin}
@@ -61,7 +62,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-noreply@nexora.local}
       SMTP_TLS: ${SMTP_TLS:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8090/auth/realms/central-monitor}
+      OIDC_ISSUER: ${OIDC_ISSUER:-${CENTRAL_PUBLIC_URL:-http://localhost:8090}/auth/realms/central-monitor}
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
       OIDC_AUDIENCE: central-monitor
       DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
@@ -130,6 +131,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
+      CENTRAL_PUBLIC_URL: ${CENTRAL_PUBLIC_URL:-http://localhost:8090}
       JAVA_OPTS_KC_HEAP: -Xms256m -Xmx1024m
     volumes:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
@@ -236,9 +238,11 @@ services:
     image: nginx:1.28-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${CENTRAL_HTTP_PORT:-8090}:80"
+      - "${CENTRAL_BIND_ADDRESS:-127.0.0.1}:${CENTRAL_HTTP_PORT:-8090}:80"
+    environment:
+      BENNER_MONITOR_UPSTREAM: ${BENNER_MONITOR_UPSTREAM:-http://host.docker.internal:8091}
     volumes:
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     depends_on:
       api:
         condition: service_healthy
