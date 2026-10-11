@@ -113,6 +113,28 @@ const menu = [
     ["settings", "Configurações", "⚒"],
     ["admin", "Administração", "♙"],
   ],
+  labels = {
+    new: "Novo",
+    acknowledged: "Reconhecido",
+    in_progress: "Em andamento",
+    waiting_customer: "Aguardando cliente",
+    waiting_supplier: "Aguardando fornecedor",
+    resolved: "Resolvido",
+    closed: "Fechado",
+    ignored: "Ignorado",
+    low: "Baixa",
+    medium: "Média",
+    high: "Alta",
+    critical: "Crítica",
+    on_track: "Dentro do prazo",
+    at_risk: "Em risco",
+    breached: "SLA vencido",
+    synced: "Sincronizado",
+    pending: "Pendente",
+    failed: "Falhou",
+  },
+  translated = (value) =>
+    labels[value] || String(value || "Desconhecido").replaceAll("_", " "),
   ask = (l, v = "") => prompt(l, v ?? ""),
   fmt = (v) => (v ? new Date(v).toLocaleString("pt-BR") : "—");
 function LogoMark() {
@@ -171,7 +193,7 @@ function Status({ value }) {
     <span
       className={`status ${String(value || "unknown").replaceAll("_", "-")}`}
     >
-      {String(value || "unknown").replaceAll("_", " ")}
+      {translated(value)}
     </span>
   );
 }
@@ -1376,74 +1398,117 @@ function App() {
                       <b>{fmt(detail.incident.resolution_due_at)}</b>
                     </span>
                   </div>
-                  <div className="form-row">
-                    <select
-                      defaultValue={detail.incident.status}
-                      onChange={(e) =>
-                        updateIncident(detail.incident, e.target.value)
-                      }
-                    >
-                      {[
-                        "new",
-                        "acknowledged",
-                        "in_progress",
-                        "waiting_customer",
-                        "waiting_supplier",
-                        "resolved",
-                        "closed",
-                        "ignored",
-                      ].map((s) => (
-                        <option key={s}>{s}</option>
-                      ))}
-                    </select>
-                    <select
-                      defaultValue={detail.incident.priority}
-                      onChange={(e) =>
-                        updateIncident(
-                          detail.incident,
-                          detail.incident.status,
-                          { priority: e.target.value },
-                        )
-                      }
-                    >
-                      {["low", "medium", "high", "critical"].map((s) => (
-                        <option key={s}>{s}</option>
-                      ))}
-                    </select>
-                    <select
-                      defaultValue={detail.incident.assignee_team_id || ""}
-                      onChange={(e) =>
-                        e.target.value &&
-                        updateIncident(
-                          detail.incident,
-                          detail.incident.status,
-                          { assignee_team_id: e.target.value },
-                        )
-                      }
-                    >
-                      <option value="">Equipe</option>
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      defaultValue={detail.incident.supplier_id || ""}
-                      onChange={(e) =>
-                        e.target.value &&
-                        updateIncident(detail.incident, "waiting_supplier", {
-                          supplier_id: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="">Fornecedor</option>
-                      {suppliers.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="incident-controls">
+                    <label className="field">
+                      <span>Estado</span>
+                      <select
+                        defaultValue={detail.incident.status}
+                        onChange={(e) =>
+                          updateIncident(detail.incident, e.target.value)
+                        }
+                      >
+                        {[
+                          "new",
+                          "acknowledged",
+                          "in_progress",
+                          "waiting_customer",
+                          "waiting_supplier",
+                          "resolved",
+                          "closed",
+                          "ignored",
+                        ].map((s) => (
+                          <option key={s} value={s}>
+                            {translated(s)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Prioridade</span>
+                      <select
+                        defaultValue={detail.incident.priority}
+                        onChange={(e) =>
+                          updateIncident(
+                            detail.incident,
+                            detail.incident.status,
+                            { priority: e.target.value },
+                          )
+                        }
+                      >
+                        {["low", "medium", "high", "critical"].map((s) => (
+                          <option key={s} value={s}>
+                            {translated(s)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Equipe responsável</span>
+                      <select
+                        defaultValue={detail.incident.assignee_team_id || ""}
+                        onChange={(e) =>
+                          e.target.value &&
+                          updateIncident(
+                            detail.incident,
+                            detail.incident.status,
+                            { assignee_team_id: e.target.value },
+                          )
+                        }
+                      >
+                        <option value="">Selecione uma equipe</option>
+                        {teams
+                          .filter((t) => t.active)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Usuário responsável</span>
+                      <select
+                        defaultValue={detail.incident.assignee_user_id || ""}
+                        onChange={(e) =>
+                          e.target.value &&
+                          updateIncident(
+                            detail.incident,
+                            detail.incident.status,
+                            { assignee_user_id: e.target.value },
+                          )
+                        }
+                      >
+                        <option value="">Selecione um usuário</option>
+                        {users
+                          .filter((u) => u.active)
+                          .map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.display_name || u.email}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Fornecedor</span>
+                      <select
+                        defaultValue={detail.incident.supplier_id || ""}
+                        onChange={(e) =>
+                          e.target.value &&
+                          updateIncident(detail.incident, "waiting_supplier", {
+                            supplier_id: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Selecione um fornecedor</option>
+                        {suppliers
+                          .filter((s) => s.active)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
                   </div>
                   <h3>Comentários</h3>
                   {detail.comments.map((c) => (

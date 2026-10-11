@@ -461,6 +461,22 @@ nav button.active {
 .detail-grid b {
   color: #0f172a;
 }
+.incident-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 24px;
+  padding: 16px;
+  border: 1px solid var(--nx-border);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.incident-controls .field:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.incident-controls select {
+  width: 100%;
+}
 .timeline {
   border-left: 3px solid #bfdbfe;
   padding: 9px 12px;
@@ -1186,6 +1202,12 @@ nav button.active {
 @media (max-width: 850px) {
   .channel-form {
     grid-template-columns: 1fr;
+  }
+  .incident-controls {
+    grid-template-columns: 1fr;
+  }
+  .incident-controls .field:last-child:nth-child(odd) {
+    grid-column: auto;
   }
 }
 .notice-toast {
