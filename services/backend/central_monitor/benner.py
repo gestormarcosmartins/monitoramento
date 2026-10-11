@@ -31,6 +31,10 @@ def _check_data(item: dict[str, Any]) -> tuple[int, str, str, str, str]:
     return number, name, category, state, message
 
 
+def _is_ok_state(state: str) -> bool:
+    return state in ("ok", "normal", "info", "success", "healthy", "up")
+
+
 @router.post("/agents/benner/snapshots", status_code=status.HTTP_202_ACCEPTED)
 def ingest_snapshot(
     payload: dict[str, Any],
@@ -82,7 +86,7 @@ def ingest_snapshot(
                     (tenant_id, asset["id"], monitor_name,
                      Jsonb({"source": "benner-health-monitor", "check_id": number, "category": category}), severity),
                 ).fetchone()
-                ok = state in ("ok", "normal", "info")
+                ok = _is_ok_state(state)
                 connection.execute(
                     "UPDATE cm_monitors SET last_checked_at=%s,last_status=%s,last_message=%s WHERE id=%s",
                     (payload["timestamp"], "up" if ok else "down", message[:1000], monitor["id"]),

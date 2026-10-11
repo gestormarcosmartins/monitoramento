@@ -595,6 +595,7 @@ function NotificationChannels({
 function App() {
   const [token, setToken] = useState(""),
     [ready, setReady] = useState(false),
+    [refreshing, setRefreshing] = useState(false),
     [view, setView] = useState("overview"),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(null),
@@ -940,13 +941,17 @@ function App() {
               <p>{tenant?.name || "Visão consolidada da operação"}</p>
             </div>
             <button
-              onClick={() => {
-                refreshTenants();
-                refreshDashboard();
-                refresh();
-              }}
+              disabled={refreshing}
+              onClick={() => run(async () => {
+                setRefreshing(true);
+                try {
+                  await Promise.all([refreshTenants(), refreshDashboard(), refresh()]);
+                } finally {
+                  setRefreshing(false);
+                }
+              }, "Dados atualizados com sucesso.")}
             >
-              ↻&nbsp;&nbsp;Atualizar
+              ↻&nbsp;&nbsp;{refreshing ? "Atualizando..." : "Atualizar"}
             </button>
           </header>
           {error && (
