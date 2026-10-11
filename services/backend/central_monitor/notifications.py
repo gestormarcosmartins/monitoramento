@@ -79,9 +79,16 @@ def send_whatsapp(tenant_id: str, target: str, body: str) -> None:
     if not config["evolution_api_url"].startswith(("https://", "http://")):
         raise RuntimeError("A URL da Evolution API deve usar HTTP ou HTTPS")
     number = re.sub(r"\D", "", target)
-    if len(number) < 10: raise RuntimeError("Número de WhatsApp inválido; informe país e DDD")
+    if len(number) < 10 or len(number) > 15:
+        raise RuntimeError("Número de WhatsApp inválido. Informe somente números, incluindo país e DDD; exemplo: 5511999999999")
     url = f"{config['evolution_api_url'].rstrip('/')}/message/sendText/{config['evolution_instance']}"
     response = httpx.post(url, headers={"apikey": config["evolution_api_key"]}, json={"number": number, "text": body}, timeout=20)
+    if response.status_code == 400:
+        raise RuntimeError("A Evolution recusou o número informado. Use somente números com país e DDD; exemplo: 5511999999999")
+    if response.status_code == 404:
+        raise RuntimeError("A instância do WhatsApp não foi encontrada na Evolution API")
+    if response.status_code >= 500:
+        raise RuntimeError("A Evolution API não conseguiu enviar. Verifique se a instância do WhatsApp está conectada")
     response.raise_for_status()
 
 
