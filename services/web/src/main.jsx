@@ -159,6 +159,11 @@ const menu = [
     ["settings", "Configurações", "⚒"],
     ["admin", "Administração", "♙"],
   ],
+  adminMenu = [
+    ["admin-users", "Usuários e Perfis", "•"],
+    ["admin-teams", "Equipes", "•"],
+    ["admin-maintenance", "Janelas de Manutenção", "•"],
+  ],
   labels = {
     new: "Novo",
     acknowledged: "Reconhecido",
@@ -345,6 +350,36 @@ const Input = ({ label, ...props }) => (
     <input {...props} />
   </label>
 );
+function CollectionField({ label, items, onChange, placeholder, options }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const value = draft.trim();
+    if (value && !items.includes(value)) onChange([...items, value]);
+    setDraft("");
+  };
+  const itemLabel = (value) => options?.find((o) => o.value === value)?.label || value;
+  return (
+    <div className="collection-field">
+      <span>{label}</span>
+      <div className="collection-entry">
+        {options ? (
+          <select value={draft} onChange={(e) => setDraft(e.target.value)}>
+            <option value="">Selecione...</option>
+            {options.filter((o) => !items.includes(o.value)).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ) : (
+          <input value={draft} placeholder={placeholder} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+        )}
+        <button type="button" className="secondary" onClick={add}>Adicionar</button>
+      </div>
+      <div className="collection-list">
+        {items.length ? items.map((item) => (
+          <span className="collection-chip" key={item}>{itemLabel(item)}<button type="button" aria-label={`Remover ${itemLabel(item)}`} onClick={() => onChange(items.filter((x) => x !== item))}>×</button></span>
+        )) : <small>Nenhum item adicionado.</small>}
+      </div>
+    </div>
+  );
+}
 function Toast({ notice, onClose }) {
   if (!notice) return null;
   return (
@@ -603,6 +638,7 @@ function App() {
     [detail, setDetail] = useState(null),
     [selected, setSelected] = useState(null),
     [editingTeam, setEditingTeam] = useState(null),
+    [teamContacts, setTeamContacts] = useState({ emails: [], numbers: [], groups: [], members: [] }),
     [showCompanyForm, setShowCompanyForm] = useState(false),
     [companySearch, setCompanySearch] = useState("");
   const identity = useMemo(() => (token ? parseToken(token) : null), [token]),
@@ -844,15 +880,18 @@ function App() {
           </div>
         </div>
         <nav aria-label="Navegação principal">
-          {menu.map(([k, l, i]) => (
-            <button
-              key={k}
-              className={view === k ? "active" : ""}
-              aria-current={view === k ? "page" : undefined}
-              onClick={() => setView(k)}
-            >
-              <i aria-hidden="true">{i}</i>
-              {l}
+          {menu.map(([k, l, i]) => k === "admin" ? (
+            <div className="nav-group" key={k}>
+              <button className={view === k || view.startsWith("admin-") ? "active" : ""} onClick={() => setView(k)}>
+                <i aria-hidden="true">{i}</i>{l}
+              </button>
+              <div className="nav-submenu">
+                {adminMenu.map(([sk, sl, si]) => <button key={sk} className={view === sk ? "active" : ""} aria-current={view === sk ? "page" : undefined} onClick={() => setView(sk)}><i aria-hidden="true">{si}</i>{sl}</button>)}
+              </div>
+            </div>
+          ) : (
+            <button key={k} className={view === k ? "active" : ""} aria-current={view === k ? "page" : undefined} onClick={() => setView(k)}>
+              <i aria-hidden="true">{i}</i>{l}
             </button>
           ))}
         </nav>
@@ -866,7 +905,7 @@ function App() {
         <div className="topbar">
           <div className="breadcrumb">
             Nexora <b>›</b>
-            <strong>{menu.find((x) => x[0] === view)?.[1]}</strong>
+            <strong>{[...menu, ...adminMenu].find((x) => x[0] === view)?.[1]}</strong>
           </div>
           <input aria-label="Pesquisa global" placeholder="Pesquisar..." />
           <select
@@ -897,7 +936,7 @@ function App() {
         <main className="content">
           <header>
             <div>
-              <h1>{menu.find((x) => x[0] === view)?.[1]}</h1>
+              <h1>{[...menu, ...adminMenu].find((x) => x[0] === view)?.[1]}</h1>
               <p>{tenant?.name || "Visão consolidada da operação"}</p>
             </div>
             <button
@@ -2026,44 +2065,42 @@ function App() {
               />
             </section>
           )}
-          {view === "settings" && (
+          {["settings", "admin-teams", "admin-maintenance"].includes(view) && (
             <div className="ops-grid">
-              <section className="panel">
+              {view === "admin-teams" && (
+              <section className="panel wide-panel">
                 <h2>Equipes</h2>
                 <form
                   key={editingTeam?.id || "new-team"}
-                  className="form-row"
+                  className="form-row team-form"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const f = new FormData(e.currentTarget);
-                    const split = (value) => String(value || "").split(/[\n,;]+/).map((v) => v.trim()).filter(Boolean);
                     submit(editingTeam ? `teams/${editingTeam.id}` : "teams", {
                       name: f.get("name"),
-                      emails: split(f.get("emails")),
-                      whatsapp_numbers: split(f.get("whatsapp_numbers")),
-                      whatsapp_group_id: f.get("whatsapp_group_id") || null,
-                      member_user_ids: Array.from(e.currentTarget.elements.members.selectedOptions).map((o) => o.value),
+                      emails: teamContacts.emails,
+                      whatsapp_numbers: teamContacts.numbers,
+                      whatsapp_group_ids: teamContacts.groups,
+                      member_user_ids: teamContacts.members,
                       active: editingTeam?.active ?? true,
-                    }, () => { setEditingTeam(null); refresh(); }, editingTeam ? "PUT" : "POST");
+                    }, () => { setEditingTeam(null); setTeamContacts({ emails: [], numbers: [], groups: [], members: [] }); refresh(); }, editingTeam ? "PUT" : "POST");
                     e.currentTarget.reset();
                   }}
                 >
                   <input name="name" placeholder="Nome da equipe" defaultValue={editingTeam?.name || ""} required />
-                  <textarea name="emails" placeholder="E-mails (um por linha)" defaultValue={(editingTeam?.emails || []).join("\n")} />
-                  <textarea name="whatsapp_numbers" placeholder="WhatsApp com país e DDD (um por linha)" defaultValue={(editingTeam?.whatsapp_numbers || []).join("\n")} />
-                  <input name="whatsapp_group_id" placeholder="ID do grupo WhatsApp (ex.: ...@g.us)" defaultValue={editingTeam?.whatsapp_group_id || ""} />
-                  <label className="field"><span>Técnicos da equipe</span><select name="members" multiple defaultValue={(editingTeam?.member_user_ids || []).map(String)}>
-                    {users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
-                  </select></label>
+                  <CollectionField label="E-mails" items={teamContacts.emails} onChange={(emails) => setTeamContacts((v) => ({ ...v, emails }))} placeholder="nome@empresa.com" />
+                  <CollectionField label="Números de WhatsApp" items={teamContacts.numbers} onChange={(numbers) => setTeamContacts((v) => ({ ...v, numbers }))} placeholder="5511999999999" />
+                  <CollectionField label="IDs de grupos do WhatsApp" items={teamContacts.groups} onChange={(groups) => setTeamContacts((v) => ({ ...v, groups }))} placeholder="120363...@g.us" />
+                  <CollectionField label="Técnicos" items={teamContacts.members} onChange={(members) => setTeamContacts((v) => ({ ...v, members }))} options={users.filter((u) => u.active).map((u) => ({ value: String(u.id), label: `${u.display_name} — ${u.email}` }))} />
                   <button>{editingTeam ? "Salvar" : "Criar"}</button>
-                  {editingTeam && <button type="button" className="secondary" onClick={() => setEditingTeam(null)}>Cancelar</button>}
+                  {editingTeam && <button type="button" className="secondary" onClick={() => { setEditingTeam(null); setTeamContacts({ emails: [], numbers: [], groups: [], members: [] }); }}>Cancelar</button>}
                 </form>
                 <DataGrid
                   columns={[
                     { key: "name", label: "Equipe" },
                     { key: "emails", label: "E-mails", render: (r) => (r.emails || []).join(", ") || "—" },
                     { key: "whatsapp_numbers", label: "WhatsApp", render: (r) => (r.whatsapp_numbers || []).join(", ") || "—" },
-                    { key: "whatsapp_group_id", label: "Grupo WhatsApp", render: (r) => r.whatsapp_group_id || "—" },
+                    { key: "whatsapp_group_ids", label: "Grupos WhatsApp", render: (r) => (r.whatsapp_group_ids || []).join(", ") || "—" },
                     { key: "member_names", label: "Técnicos", render: (r) => r.member_names || "—" },
                     {
                       key: "active",
@@ -2077,7 +2114,10 @@ function App() {
                   actions={(t) => (
                     <>
                       <button
-                        onClick={() => setEditingTeam(t)}
+                        onClick={() => {
+                          setEditingTeam(t);
+                          setTeamContacts({ emails: t.emails || [], numbers: t.whatsapp_numbers || [], groups: t.whatsapp_group_ids || (t.whatsapp_group_id ? [t.whatsapp_group_id] : []), members: (t.member_user_ids || []).map(String) });
+                        }}
                       >
                         Editar
                       </button>
@@ -2085,7 +2125,7 @@ function App() {
                         onClick={() =>
                           submit(
                             `teams/${t.id}`,
-                            { name: t.name, emails: t.emails || [], whatsapp_numbers: t.whatsapp_numbers || [], whatsapp_group_id: t.whatsapp_group_id, member_user_ids: t.member_user_ids || [], active: !t.active },
+                            { name: t.name, emails: t.emails || [], whatsapp_numbers: t.whatsapp_numbers || [], whatsapp_group_ids: t.whatsapp_group_ids || [], member_user_ids: t.member_user_ids || [], active: !t.active },
                             refresh,
                             "PUT",
                           )
@@ -2103,6 +2143,8 @@ function App() {
                   )}
                 />
               </section>
+              )}
+              {view === "settings" && (
               <section className="panel">
                 <h2>Notificações</h2>
                 <form
@@ -2199,7 +2241,9 @@ function App() {
                   )}
                 />
               </section>
-              <section className="panel">
+              )}
+              {view === "admin-maintenance" && (
+              <section className="panel wide-panel">
                 <h2>Janelas de manutenção</h2>
                 <form
                   className="stack-form"
@@ -2306,11 +2350,13 @@ function App() {
                   )}
                 />
               </section>
+              )}
             </div>
           )}
-          {view === "admin" && (
+          {(view === "admin" || view === "admin-users") && (
             <div className="ops-grid">
-              <section className="panel">
+              {view === "admin-users" && (
+              <section className="panel wide-panel">
                 <h2>Usuários e perfis</h2>
                 <DataGrid
                   columns={[
@@ -2369,6 +2415,8 @@ function App() {
                   )}
                 />
               </section>
+              )}
+              {view === "admin" && (<>
               <section className="panel">
                 <h2>Motores operacionais</h2>
                 <div className="admin-grid">
@@ -2406,6 +2454,7 @@ function App() {
                   rows={audit}
                 />
               </section>
+              </>)}
             </div>
           )}
           {view === "settings" &&

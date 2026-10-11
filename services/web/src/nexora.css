@@ -1282,3 +1282,19 @@ nav button.active {
     opacity: 1;
   }
 }
+/* Administration submenus and multi-value team editor */
+.nav-group { display: grid; gap: 3px; }
+.nav-submenu { display: grid; gap: 2px; padding: 2px 0 5px 26px; }
+.nav-submenu button { min-height: 34px; padding: 7px 10px; font-size: 13px; }
+.nav-submenu button i { width: 10px; font-size: 12px; }
+.team-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.team-form > input[name="name"] { grid-column: 1 / -1; width: 100%; }
+.collection-field { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--nx-border); border-radius: 9px; background: #fff; }
+.collection-field > span { font-weight: 700; color: #334155; }
+.collection-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.collection-entry input, .collection-entry select { width: 100%; min-width: 0; }
+.collection-list { display: flex; flex-wrap: wrap; gap: 7px; min-height: 28px; align-items: center; }
+.collection-list small { color: var(--nx-muted); }
+.collection-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 5px 8px 5px 10px; border-radius: 999px; background: #e8f0ff; color: #1746a2; overflow-wrap: anywhere; }
+.collection-chip button { border: 0; padding: 0 3px; background: transparent; color: #1746a2; font-size: 18px; line-height: 1; }
+@media (max-width: 720px) { .team-form { grid-template-columns: 1fr; } }

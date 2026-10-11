@@ -67,6 +67,7 @@ class TeamPayload(BaseModel):
     emails: list[EmailStr] = Field(default_factory=list)
     whatsapp_numbers: list[str] = Field(default_factory=list)
     whatsapp_group_id: str | None = Field(default=None, max_length=200)
+    whatsapp_group_ids: list[str] = Field(default_factory=list)
     member_user_ids: list[UUID] = Field(default_factory=list)
     active: bool = True
 
@@ -262,7 +263,8 @@ def teams(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current
 def create_team(payload:TeamPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
     authorize(identity,tenant_id,("admin","manager"))
     with tenant_connection(tenant_id) as c:
-        row=c.execute("INSERT INTO cm_teams(tenant_id,name,emails,whatsapp_numbers,whatsapp_group_id,active) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",(tenant_id,payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,payload.whatsapp_group_id or None,payload.active)).fetchone()
+        groups=payload.whatsapp_group_ids or ([payload.whatsapp_group_id] if payload.whatsapp_group_id else [])
+        row=c.execute("INSERT INTO cm_teams(tenant_id,name,emails,whatsapp_numbers,whatsapp_group_id,whatsapp_group_ids,active) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *",(tenant_id,payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,groups[0] if groups else None,groups,payload.active)).fetchone()
         for user_id in set(payload.member_user_ids):
             c.execute("INSERT INTO cm_team_members(tenant_id,team_id,user_id) SELECT %s,%s,%s WHERE EXISTS(SELECT 1 FROM cm_user_tenants WHERE tenant_id=%s AND user_id=%s)",(tenant_id,row["id"],user_id,tenant_id,user_id))
         return row
@@ -272,7 +274,8 @@ def create_team(payload:TeamPayload,tenant_id:str=Depends(tenant_header),identit
 def update_team(item_id:str,payload:TeamPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
     authorize(identity,tenant_id,("admin","manager"))
     with tenant_connection(tenant_id) as c:
-        row=c.execute("UPDATE cm_teams SET name=%s,emails=%s,whatsapp_numbers=%s,whatsapp_group_id=%s,active=%s WHERE tenant_id=%s AND id=%s RETURNING *",(payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,payload.whatsapp_group_id or None,payload.active,tenant_id,item_id)).fetchone()
+        groups=payload.whatsapp_group_ids or ([payload.whatsapp_group_id] if payload.whatsapp_group_id else [])
+        row=c.execute("UPDATE cm_teams SET name=%s,emails=%s,whatsapp_numbers=%s,whatsapp_group_id=%s,whatsapp_group_ids=%s,active=%s WHERE tenant_id=%s AND id=%s RETURNING *",(payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,groups[0] if groups else None,groups,payload.active,tenant_id,item_id)).fetchone()
         if not row: raise HTTPException(404,"Team not found")
         c.execute("DELETE FROM cm_team_members WHERE tenant_id=%s AND team_id=%s",(tenant_id,item_id))
         for user_id in set(payload.member_user_ids):

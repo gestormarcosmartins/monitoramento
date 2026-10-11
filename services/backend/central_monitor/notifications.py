@@ -136,7 +136,7 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
     with tenant_connection(tenant_id) as connection:
         route = connection.execute(
             """SELECT m.responsible_team_id,m.responsible_user_id,m.notify_on_failure,m.notify_on_recovery,
-                t.emails,t.whatsapp_numbers,t.whatsapp_group_id,
+                t.emails,t.whatsapp_numbers,t.whatsapp_group_id,t.whatsapp_group_ids,
                 ru.email AS responsible_email,ru.whatsapp_number AS responsible_whatsapp
             FROM cm_incidents i JOIN cm_alerts a ON a.id=i.alert_id
             JOIN cm_monitors m ON m.id=a.monitor_id
@@ -158,6 +158,7 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
         return
     emails = set(route["emails"] or [])
     whatsapp = set(route["whatsapp_numbers"] or [])
+    whatsapp.update(route["whatsapp_group_ids"] or [])
     if route["whatsapp_group_id"]:
         whatsapp.add(route["whatsapp_group_id"])
     if route["responsible_email"]:
