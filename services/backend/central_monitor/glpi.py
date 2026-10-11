@@ -54,7 +54,8 @@ class GlpiClient:
         return int(result["id"])
 
     def update_ticket_status(self, ticket_id: int, status: str) -> None:
-        glpi_status = {"new": 1, "acknowledged": 2, "in_progress": 2, "resolved": 5, "ignored": 6}[status]
+        glpi_status = {"new": 1, "acknowledged": 2, "in_progress": 2, "waiting_customer": 4,
+                       "waiting_supplier": 4, "resolved": 5, "closed": 6, "ignored": 6}[status]
         self._request("PUT", f"Ticket/{ticket_id}", {"input": {"id": ticket_id, "status": glpi_status}})
 
     def add_followup(self, ticket_id: int, body: str, private: bool = False) -> int:

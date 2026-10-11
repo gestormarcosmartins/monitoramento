@@ -64,7 +64,15 @@ class SlaPayload(BaseModel):
 
 class TeamPayload(BaseModel):
     name: str = Field(min_length=2, max_length=160)
+    emails: list[EmailStr] = Field(default_factory=list)
+    whatsapp_numbers: list[str] = Field(default_factory=list)
+    whatsapp_group_id: str | None = Field(default=None, max_length=200)
+    member_user_ids: list[UUID] = Field(default_factory=list)
     active: bool = True
+
+
+class UserNotificationPayload(BaseModel):
+    whatsapp_number: str | None = Field(default=None, max_length=30)
 
 
 class NotificationRulePayload(BaseModel):
@@ -240,21 +248,35 @@ def delete_sla(item_id:str,tenant_id:str=Depends(tenant_header),identity:Identit
 
 @router.get("/teams")
 def teams(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->list[dict[str,Any]]:
-    authorize(identity,tenant_id); return crud_list("cm_teams",tenant_id)
+    authorize(identity,tenant_id)
+    with tenant_connection(tenant_id) as c:
+        return list(c.execute("""SELECT t.*,
+            COALESCE(array_agg(tm.user_id) FILTER (WHERE tm.user_id IS NOT NULL),'{}') AS member_user_ids,
+            COALESCE(string_agg(u.display_name, ', ' ORDER BY u.display_name),'') AS member_names
+            FROM cm_teams t LEFT JOIN cm_team_members tm ON tm.team_id=t.id AND tm.tenant_id=t.tenant_id
+            LEFT JOIN cm_users u ON u.id=tm.user_id WHERE t.tenant_id=%s
+            GROUP BY t.id ORDER BY t.name""",(tenant_id,)).fetchall())
 
 
 @router.post("/teams",status_code=201)
 def create_team(payload:TeamPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
     authorize(identity,tenant_id,("admin","manager"))
-    with tenant_connection(tenant_id) as c: return c.execute("INSERT INTO cm_teams(tenant_id,name,active) VALUES (%s,%s,%s) RETURNING *",(tenant_id,payload.name,payload.active)).fetchone()
+    with tenant_connection(tenant_id) as c:
+        row=c.execute("INSERT INTO cm_teams(tenant_id,name,emails,whatsapp_numbers,whatsapp_group_id,active) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *",(tenant_id,payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,payload.whatsapp_group_id or None,payload.active)).fetchone()
+        for user_id in set(payload.member_user_ids):
+            c.execute("INSERT INTO cm_team_members(tenant_id,team_id,user_id) SELECT %s,%s,%s WHERE EXISTS(SELECT 1 FROM cm_user_tenants WHERE tenant_id=%s AND user_id=%s)",(tenant_id,row["id"],user_id,tenant_id,user_id))
+        return row
 
 
 @router.put("/teams/{item_id}")
 def update_team(item_id:str,payload:TeamPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
     authorize(identity,tenant_id,("admin","manager"))
     with tenant_connection(tenant_id) as c:
-        row=c.execute("UPDATE cm_teams SET name=%s,active=%s WHERE tenant_id=%s AND id=%s RETURNING *",(payload.name,payload.active,tenant_id,item_id)).fetchone()
+        row=c.execute("UPDATE cm_teams SET name=%s,emails=%s,whatsapp_numbers=%s,whatsapp_group_id=%s,active=%s WHERE tenant_id=%s AND id=%s RETURNING *",(payload.name,[str(x) for x in payload.emails],payload.whatsapp_numbers,payload.whatsapp_group_id or None,payload.active,tenant_id,item_id)).fetchone()
         if not row: raise HTTPException(404,"Team not found")
+        c.execute("DELETE FROM cm_team_members WHERE tenant_id=%s AND team_id=%s",(tenant_id,item_id))
+        for user_id in set(payload.member_user_ids):
+            c.execute("INSERT INTO cm_team_members(tenant_id,team_id,user_id) SELECT %s,%s,%s WHERE EXISTS(SELECT 1 FROM cm_user_tenants WHERE tenant_id=%s AND user_id=%s)",(tenant_id,item_id,user_id,tenant_id,user_id))
         return row
 
 
@@ -354,7 +376,18 @@ def delete_maintenance(item_id:str,tenant_id:str=Depends(tenant_header),identity
 @router.get("/users")
 def users(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->list[dict[str,Any]]:
     authorize(identity,tenant_id,("admin","manager","auditor"))
-    with connect() as c: return list(c.execute("SELECT u.id,u.email,u.display_name,u.active,ut.role FROM cm_user_tenants ut JOIN cm_users u ON u.id=ut.user_id WHERE ut.tenant_id=%s ORDER BY u.display_name",(tenant_id,)).fetchall())
+    with connect() as c: return list(c.execute("SELECT u.id,u.email,u.display_name,u.whatsapp_number,u.active,ut.role FROM cm_user_tenants ut JOIN cm_users u ON u.id=ut.user_id WHERE ut.tenant_id=%s ORDER BY u.display_name",(tenant_id,)).fetchall())
+
+
+@router.put("/users/{user_id}/notifications")
+def update_user_notifications(user_id:str,payload:UserNotificationPayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
+    authorize(identity,tenant_id,("admin","manager"))
+    with connect() as c:
+        row=c.execute("""UPDATE cm_users SET whatsapp_number=%s WHERE id=%s
+            AND EXISTS(SELECT 1 FROM cm_user_tenants WHERE tenant_id=%s AND user_id=cm_users.id)
+            RETURNING id,email,display_name,whatsapp_number,active""",(payload.whatsapp_number or None,user_id,tenant_id)).fetchone()
+        if not row: raise HTTPException(404,"User not found")
+        return row
 
 
 @router.put("/users/membership")

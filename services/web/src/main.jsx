@@ -548,6 +548,7 @@ function App() {
     [benner, setBenner] = useState({ snapshot: null, checks: [] }),
     [detail, setDetail] = useState(null),
     [selected, setSelected] = useState(null),
+    [editingTeam, setEditingTeam] = useState(null),
     [showCompanyForm, setShowCompanyForm] = useState(false),
     [companySearch, setCompanySearch] = useState("");
   const identity = useMemo(() => (token ? parseToken(token) : null), [token]),
@@ -1143,6 +1144,11 @@ function App() {
                           },
                     interval_seconds: 60,
                     severity: f.get("severity"),
+                    responsible_team_id: f.get("responsible_team") || null,
+                    responsible_user_id: f.get("responsible_user") || null,
+                    notify_on_failure: f.get("notify_failure") === "on",
+                    notify_on_recovery: f.get("notify_recovery") === "on",
+                    auto_resolve_incident: f.get("auto_resolve") === "on",
                   });
                   e.currentTarget.reset();
                 }}
@@ -1167,6 +1173,17 @@ function App() {
                   <option value="high">Alta</option>
                   <option value="disaster">Crítica</option>
                 </select>
+                <select name="responsible_team">
+                  <option value="">Equipe responsável</option>
+                  {teams.filter((t) => t.active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <select name="responsible_user">
+                  <option value="">Técnico específico (opcional)</option>
+                  {users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.display_name}</option>)}
+                </select>
+                <label><input name="notify_failure" type="checkbox" defaultChecked /> Avisar na falha</label>
+                <label><input name="notify_recovery" type="checkbox" defaultChecked /> Avisar ao normalizar</label>
+                <label><input name="auto_resolve" type="checkbox" defaultChecked /> Encerrar chamado ao normalizar</label>
                 <button>Criar</button>
               </form>
               <DataGrid
@@ -1174,6 +1191,28 @@ function App() {
                   { key: "name", label: "Serviço" },
                   { key: "asset_name", label: "Ativo" },
                   { key: "monitor_type", label: "Tipo" },
+                  { key: "responsible_team_name", label: "Equipe", render: (m) => (
+                    <select value={m.responsible_team_id || ""} onChange={(e) => submit(`monitors/${m.id}`, {
+                      asset_id:m.asset_id,name:m.name,monitor_type:m.monitor_type,configuration:m.configuration,
+                      interval_seconds:m.interval_seconds,severity:m.severity,active:m.active,
+                      responsible_team_id:e.target.value || null,responsible_user_id:m.responsible_user_id,
+                      notify_on_failure:m.notify_on_failure,notify_on_recovery:m.notify_on_recovery,
+                      auto_resolve_incident:m.auto_resolve_incident,
+                    },refresh,"PUT")}>
+                      <option value="">Sem equipe</option>{teams.filter((t) => t.active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  )},
+                  { key: "responsible_user_name", label: "Técnico", render: (m) => (
+                    <select value={m.responsible_user_id || ""} onChange={(e) => submit(`monitors/${m.id}`, {
+                      asset_id:m.asset_id,name:m.name,monitor_type:m.monitor_type,configuration:m.configuration,
+                      interval_seconds:m.interval_seconds,severity:m.severity,active:m.active,
+                      responsible_team_id:m.responsible_team_id,responsible_user_id:e.target.value || null,
+                      notify_on_failure:m.notify_on_failure,notify_on_recovery:m.notify_on_recovery,
+                      auto_resolve_incident:m.auto_resolve_incident,
+                    },refresh,"PUT")}>
+                      <option value="">Sem técnico</option>{users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.display_name}</option>)}
+                    </select>
+                  )},
                   {
                     key: "active",
                     label: "Cadastro",
@@ -1205,6 +1244,11 @@ function App() {
                               interval_seconds: m.interval_seconds,
                               severity: m.severity,
                               active: m.active,
+                              responsible_team_id: m.responsible_team_id,
+                              responsible_user_id: m.responsible_user_id,
+                              notify_on_failure: m.notify_on_failure,
+                              notify_on_recovery: m.notify_on_recovery,
+                              auto_resolve_incident: m.auto_resolve_incident,
                             },
                             refresh,
                             "PUT",
@@ -1225,6 +1269,11 @@ function App() {
                             interval_seconds: m.interval_seconds,
                             severity: m.severity,
                             active: !m.active,
+                            responsible_team_id: m.responsible_team_id,
+                            responsible_user_id: m.responsible_user_id,
+                            notify_on_failure: m.notify_on_failure,
+                            notify_on_recovery: m.notify_on_recovery,
+                            auto_resolve_incident: m.auto_resolve_incident,
                           },
                           refresh,
                           "PUT",
@@ -1898,21 +1947,40 @@ function App() {
               <section className="panel">
                 <h2>Equipes</h2>
                 <form
+                  key={editingTeam?.id || "new-team"}
                   className="form-row"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    submit("teams", {
-                      name: new FormData(e.currentTarget).get("name"),
-                    });
+                    const f = new FormData(e.currentTarget);
+                    const split = (value) => String(value || "").split(/[\n,;]+/).map((v) => v.trim()).filter(Boolean);
+                    submit(editingTeam ? `teams/${editingTeam.id}` : "teams", {
+                      name: f.get("name"),
+                      emails: split(f.get("emails")),
+                      whatsapp_numbers: split(f.get("whatsapp_numbers")),
+                      whatsapp_group_id: f.get("whatsapp_group_id") || null,
+                      member_user_ids: Array.from(e.currentTarget.elements.members.selectedOptions).map((o) => o.value),
+                      active: editingTeam?.active ?? true,
+                    }, () => { setEditingTeam(null); refresh(); }, editingTeam ? "PUT" : "POST");
                     e.currentTarget.reset();
                   }}
                 >
-                  <input name="name" placeholder="Nome da equipe" required />
-                  <button>Criar</button>
+                  <input name="name" placeholder="Nome da equipe" defaultValue={editingTeam?.name || ""} required />
+                  <textarea name="emails" placeholder="E-mails (um por linha)" defaultValue={(editingTeam?.emails || []).join("\n")} />
+                  <textarea name="whatsapp_numbers" placeholder="WhatsApp com país e DDD (um por linha)" defaultValue={(editingTeam?.whatsapp_numbers || []).join("\n")} />
+                  <input name="whatsapp_group_id" placeholder="ID do grupo WhatsApp (ex.: ...@g.us)" defaultValue={editingTeam?.whatsapp_group_id || ""} />
+                  <label className="field"><span>Técnicos da equipe</span><select name="members" multiple defaultValue={(editingTeam?.member_user_ids || []).map(String)}>
+                    {users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
+                  </select></label>
+                  <button>{editingTeam ? "Salvar" : "Criar"}</button>
+                  {editingTeam && <button type="button" className="secondary" onClick={() => setEditingTeam(null)}>Cancelar</button>}
                 </form>
                 <DataGrid
                   columns={[
                     { key: "name", label: "Equipe" },
+                    { key: "emails", label: "E-mails", render: (r) => (r.emails || []).join(", ") || "—" },
+                    { key: "whatsapp_numbers", label: "WhatsApp", render: (r) => (r.whatsapp_numbers || []).join(", ") || "—" },
+                    { key: "whatsapp_group_id", label: "Grupo WhatsApp", render: (r) => r.whatsapp_group_id || "—" },
+                    { key: "member_names", label: "Técnicos", render: (r) => r.member_names || "—" },
                     {
                       key: "active",
                       label: "Estado",
@@ -1925,16 +1993,7 @@ function App() {
                   actions={(t) => (
                     <>
                       <button
-                        onClick={() => {
-                          const name = ask("Nome", t.name);
-                          if (name)
-                            submit(
-                              `teams/${t.id}`,
-                              { name, active: t.active },
-                              refresh,
-                              "PUT",
-                            );
-                        }}
+                        onClick={() => setEditingTeam(t)}
                       >
                         Editar
                       </button>
@@ -1942,7 +2001,7 @@ function App() {
                         onClick={() =>
                           submit(
                             `teams/${t.id}`,
-                            { name: t.name, active: !t.active },
+                            { name: t.name, emails: t.emails || [], whatsapp_numbers: t.whatsapp_numbers || [], whatsapp_group_id: t.whatsapp_group_id, member_user_ids: t.member_user_ids || [], active: !t.active },
                             refresh,
                             "PUT",
                           )
@@ -2173,6 +2232,7 @@ function App() {
                   columns={[
                     { key: "display_name", label: "Usuário" },
                     { key: "email", label: "E-mail" },
+                    { key: "whatsapp_number", label: "WhatsApp", render: (r) => r.whatsapp_number || "—" },
                     {
                       key: "role",
                       label: "Perfil",
@@ -2189,6 +2249,14 @@ function App() {
                   rows={users}
                   actions={(u) => (
                     <>
+                      <button
+                        onClick={() => {
+                          const whatsapp_number = ask("WhatsApp com país e DDD (deixe vazio para remover)", u.whatsapp_number || "");
+                          if (whatsapp_number !== null) submit(`users/${u.id}/notifications`, { whatsapp_number: whatsapp_number || null }, refresh, "PUT");
+                        }}
+                      >
+                        Contato
+                      </button>
                       <button
                         onClick={() => {
                           const role = ask(

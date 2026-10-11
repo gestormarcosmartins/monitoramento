@@ -34,6 +34,11 @@ class MonitorCreate(BaseModel):
     configuration: dict[str, Any]
     interval_seconds: int = Field(default=60, ge=30, le=86400)
     severity: Literal["info", "warning", "average", "high", "disaster"] = "warning"
+    responsible_team_id: UUID | None = None
+    responsible_user_id: UUID | None = None
+    notify_on_failure: bool = True
+    notify_on_recovery: bool = True
+    auto_resolve_incident: bool = True
 
     @model_validator(mode="after")
     def validate_configuration(self) -> "MonitorCreate":

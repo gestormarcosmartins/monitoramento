@@ -262,10 +262,12 @@ def create_monitor(payload: MonitorCreate, tenant_id: str = Depends(tenant_heade
         with tenant_connection(tenant_id) as connection:
             monitor = connection.execute(
                 """
-                INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,interval_seconds,severity)
-                VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *
+                INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,interval_seconds,severity,
+                    responsible_team_id,responsible_user_id,notify_on_failure,notify_on_recovery,auto_resolve_incident)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
                 """,
-                (tenant_id, payload.asset_id, payload.name, payload.monitor_type, Jsonb(payload.configuration), payload.interval_seconds, payload.severity),
+                (tenant_id, payload.asset_id, payload.name, payload.monitor_type, Jsonb(payload.configuration), payload.interval_seconds, payload.severity,
+                 payload.responsible_team_id,payload.responsible_user_id,payload.notify_on_failure,payload.notify_on_recovery,payload.auto_resolve_incident),
             ).fetchone()
             connection.execute(
                 "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'monitor.created',%s)",
@@ -285,8 +287,9 @@ def list_monitors(tenant_id: str = Depends(tenant_header), identity: Identity = 
     authorize_tenant(identity, tenant_id)
     with tenant_connection(tenant_id) as connection:
         return list(connection.execute(
-            """SELECT m.*,a.name AS asset_name FROM cm_monitors m
-            JOIN cm_assets a ON a.id=m.asset_id WHERE m.tenant_id=%s ORDER BY m.name""",
+            """SELECT m.*,a.name AS asset_name,t.name AS responsible_team_name,u.display_name AS responsible_user_name FROM cm_monitors m
+            JOIN cm_assets a ON a.id=m.asset_id LEFT JOIN cm_teams t ON t.id=m.responsible_team_id
+            LEFT JOIN cm_users u ON u.id=m.responsible_user_id WHERE m.tenant_id=%s ORDER BY m.name""",
             (tenant_id,),
         ).fetchall())
 
@@ -298,8 +301,11 @@ def update_monitor(monitor_id: str, payload: MonitorUpdate, tenant_id: str = Dep
         with tenant_connection(tenant_id) as connection:
             monitor = connection.execute(
                 """UPDATE cm_monitors SET asset_id=%s,name=%s,monitor_type=%s,configuration=%s,
-                interval_seconds=%s,severity=%s,active=%s WHERE id=%s AND tenant_id=%s RETURNING *""",
-                (payload.asset_id, payload.name, payload.monitor_type, Jsonb(payload.configuration), payload.interval_seconds, payload.severity, payload.active, monitor_id, tenant_id),
+                interval_seconds=%s,severity=%s,active=%s,responsible_team_id=%s,responsible_user_id=%s,
+                notify_on_failure=%s,notify_on_recovery=%s,auto_resolve_incident=%s
+                WHERE id=%s AND tenant_id=%s RETURNING *""",
+                (payload.asset_id, payload.name, payload.monitor_type, Jsonb(payload.configuration), payload.interval_seconds, payload.severity, payload.active,
+                 payload.responsible_team_id,payload.responsible_user_id,payload.notify_on_failure,payload.notify_on_recovery,payload.auto_resolve_incident,monitor_id,tenant_id),
             ).fetchone()
             if not monitor:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitor not found")

@@ -799,6 +799,7 @@ nav button.active {
 }
 .form-row input,
 .form-row select,
+.form-row textarea,
 .field input,
 .field select,
 .stack-form select,
@@ -1086,6 +1087,10 @@ nav button.active {
   .panel {
     border-radius: 10px;
   }
+.form-row textarea { min-height: 74px; resize: vertical; }
+.form-row select[multiple] { min-height: 92px; }
+.form-row label { display: flex; align-items: center; gap: 8px; color: var(--nx-muted); }
+.form-row label input[type="checkbox"] { min-height: auto; width: auto; }
   .data-grid td,
   .data-grid th {
     padding-inline: 10px;

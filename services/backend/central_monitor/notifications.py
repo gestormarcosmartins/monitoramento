@@ -78,8 +78,9 @@ def send_whatsapp(tenant_id: str, target: str, body: str) -> None:
         raise RuntimeError("Evolution API não está habilitada ou configurada")
     if not config["evolution_api_url"].startswith(("https://", "http://")):
         raise RuntimeError("A URL da Evolution API deve usar HTTP ou HTTPS")
-    number = re.sub(r"\D", "", target)
-    if len(number) < 10 or len(number) > 15:
+    target = target.strip()
+    number = target if target.endswith("@g.us") else re.sub(r"\D", "", target)
+    if not target.endswith("@g.us") and (len(number) < 10 or len(number) > 15):
         raise RuntimeError("Número de WhatsApp inválido. Informe somente números, incluindo país e DDD; exemplo: 5511999999999")
     url = f"{config['evolution_api_url'].rstrip('/')}/message/sendText/{config['evolution_instance']}"
     response = httpx.post(url, headers={"apikey": config["evolution_api_key"]}, json={"number": number, "text": body}, timeout=20)
@@ -103,6 +104,11 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
         incident = connection.execute("SELECT id,title,status,priority,created_at FROM cm_incidents WHERE tenant_id=%s AND id=%s", (tenant_id,incident_id)).fetchone()
         if not incident: return
         rules = list(connection.execute("SELECT * FROM cm_notification_rules WHERE tenant_id=%s AND active AND %s=ANY(events)", (tenant_id,event)).fetchall())
+    failures = []
+    try:
+        _deliver_responsible_contacts(tenant_id, incident_id, event, incident)
+    except Exception as error:
+        failures.append(str(error))
     for rule in rules:
         if PRIORITY.get(incident["priority"],2) < PRIORITY.get(rule["minimum_priority"],3): continue
         with tenant_connection(tenant_id) as connection:
@@ -120,4 +126,68 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
         except Exception as error:
             with tenant_connection(tenant_id) as connection:
                 connection.execute("UPDATE cm_notification_deliveries SET status='failed',last_error=%s WHERE tenant_id=%s AND id=%s",(str(error)[:1000],tenant_id,delivery["id"]))
-            raise
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, incident: dict[str, Any]) -> None:
+    """Deliver service alerts to its team and/or technician with retry-safe deduplication."""
+    with tenant_connection(tenant_id) as connection:
+        route = connection.execute(
+            """SELECT m.responsible_team_id,m.responsible_user_id,m.notify_on_failure,m.notify_on_recovery,
+                t.emails,t.whatsapp_numbers,t.whatsapp_group_id,
+                ru.email AS responsible_email,ru.whatsapp_number AS responsible_whatsapp
+            FROM cm_incidents i JOIN cm_alerts a ON a.id=i.alert_id
+            JOIN cm_monitors m ON m.id=a.monitor_id
+            LEFT JOIN cm_teams t ON t.id=m.responsible_team_id AND t.active
+            LEFT JOIN cm_users ru ON ru.id=m.responsible_user_id AND ru.active
+            WHERE i.tenant_id=%s AND i.id=%s""",
+            (tenant_id,incident_id),
+        ).fetchone()
+        if not route:
+            return
+        members = list(connection.execute(
+            """SELECT u.email,u.whatsapp_number FROM cm_team_members tm JOIN cm_users u ON u.id=tm.user_id
+            WHERE tm.tenant_id=%s AND tm.team_id=%s AND u.active""",
+            (tenant_id,route["responsible_team_id"]),
+        ).fetchall()) if route["responsible_team_id"] else []
+    if event == "incident.created" and not route["notify_on_failure"]:
+        return
+    if event == "incident.resolved" and not route["notify_on_recovery"]:
+        return
+    emails = set(route["emails"] or [])
+    whatsapp = set(route["whatsapp_numbers"] or [])
+    if route["whatsapp_group_id"]:
+        whatsapp.add(route["whatsapp_group_id"])
+    if route["responsible_email"]:
+        emails.add(route["responsible_email"])
+    if route["responsible_whatsapp"]:
+        whatsapp.add(route["responsible_whatsapp"])
+    for member in members:
+        if member["email"]: emails.add(member["email"])
+        if member["whatsapp_number"]: whatsapp.add(member["whatsapp_number"])
+    label = "FALHA" if event == "incident.created" else "NORMALIZADO"
+    message = f"Nexora - {label}\n{incident['title']}\nPrioridade: {incident['priority']}\nEstado: {incident['status']}"
+    failures = []
+    for channel, targets in (("email",emails),("whatsapp",whatsapp)):
+        for target in targets:
+            with tenant_connection(tenant_id) as connection:
+                delivery = connection.execute(
+                    """INSERT INTO cm_routing_deliveries(tenant_id,incident_id,event,channel,target,status,attempts)
+                    VALUES (%s,%s,%s,%s,%s,'pending',1)
+                    ON CONFLICT(incident_id,event,channel,target) DO UPDATE SET attempts=cm_routing_deliveries.attempts+1
+                    RETURNING *""",(tenant_id,incident_id,event,channel,target)).fetchone()
+            if delivery["status"] == "sent":
+                continue
+            try:
+                if channel == "email": send_email(tenant_id,target,f"Nexora - {label}: {incident['title']}",message)
+                else: send_whatsapp(tenant_id,target,message)
+                with tenant_connection(tenant_id) as connection:
+                    connection.execute("UPDATE cm_routing_deliveries SET status='sent',sent_at=now(),last_error=NULL WHERE tenant_id=%s AND id=%s",(tenant_id,delivery["id"]))
+            except Exception as error:
+                failures.append(f"{channel}:{target}: {error}")
+                with tenant_connection(tenant_id) as connection:
+                    connection.execute("UPDATE cm_routing_deliveries SET status='failed',last_error=%s WHERE tenant_id=%s AND id=%s",(str(error)[:1000],tenant_id,delivery["id"]))
+    if failures:
+        raise RuntimeError("; ".join(failures))

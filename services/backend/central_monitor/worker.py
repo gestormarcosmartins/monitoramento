@@ -104,11 +104,11 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
             ).fetchone()
             incident = connection.execute(
                 """
-                INSERT INTO cm_incidents(tenant_id,alert_id,title)
-                VALUES (%s,%s,%s) ON CONFLICT (tenant_id,alert_id) DO NOTHING
+                INSERT INTO cm_incidents(tenant_id,alert_id,title,assignee_team_id,assignee_user_id)
+                VALUES (%s,%s,%s,%s,%s) ON CONFLICT (tenant_id,alert_id) DO NOTHING
                 RETURNING id
                 """,
-                (tenant_id, alert["id"], alert["title"]),
+                (tenant_id, alert["id"], alert["title"],monitor.get("responsible_team_id"),monitor.get("responsible_user_id")),
             ).fetchone()
             if incident:
                 priority = {"info": "low", "warning": "medium", "average": "high", "high": "critical", "disaster": "critical"}.get(monitor["severity"], "medium")
@@ -137,11 +137,14 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                     "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.created',%s)",
                     (tenant_id, Jsonb({"incident_id": str(incident["id"])})),
                 )
-                connection.execute(
-                    "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
-                    (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.created"})),
-                )
+                if monitor.get("notify_on_failure", True):
+                    connection.execute(
+                        "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
+                        (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.created"})),
+                    )
         else:
+            if not monitor.get("auto_resolve_incident", True):
+                return
             alerts = connection.execute(
                 """UPDATE cm_alerts SET status='resolved',resolved_at=now()
                 WHERE tenant_id=%s AND fingerprint=%s AND status='open' RETURNING id""",
@@ -166,10 +169,11 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                         "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'incident.status_changed',%s)",
                         (tenant_id, Jsonb({"incident_id": str(incident["id"]), "status": "resolved"})),
                     )
-                    connection.execute(
-                        "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
-                        (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.resolved"})),
-                    )
+                    if monitor.get("notify_on_recovery", True):
+                        connection.execute(
+                            "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'notification.requested',%s)",
+                            (tenant_id,Jsonb({"incident_id":str(incident["id"]),"event":"incident.resolved"})),
+                        )
 
 
 def run_monitors() -> None:
