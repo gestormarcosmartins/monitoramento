@@ -397,7 +397,8 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
         incident = connection.execute(
             """UPDATE cm_incidents SET status=%s,title=COALESCE(%s,title),description=COALESCE(%s,description),
             priority=COALESCE(%s,priority),category=COALESCE(%s,category),
-            assignee_user_id=COALESCE(%s,assignee_user_id),assignee_team_id=COALESCE(%s,assignee_team_id),
+            assignee_user_id=CASE WHEN %s THEN %s ELSE assignee_user_id END,
+            assignee_team_id=CASE WHEN %s THEN %s ELSE assignee_team_id END,
             supplier_id=COALESCE(%s,supplier_id),supplier_protocol=COALESCE(%s,supplier_protocol),
             first_response_at=CASE WHEN %s IN ('acknowledged','in_progress') THEN COALESCE(first_response_at,now()) ELSE first_response_at END,
             acknowledged_at=CASE WHEN %s='acknowledged' THEN COALESCE(acknowledged_at,now()) ELSE acknowledged_at END,
@@ -410,7 +411,8 @@ def update_incident(incident_id: str, payload: IncidentUpdate, tenant_id: str = 
             version=version+1,updated_at=now(),sync_status='pending'
             WHERE id=%s AND tenant_id=%s AND version=%s RETURNING *""",
             (payload.status,payload.title,payload.description,payload.priority,payload.category,
-             payload.assignee_user_id,payload.assignee_team_id,payload.supplier_id,payload.supplier_protocol,
+             "assignee_user_id" in payload.model_fields_set,payload.assignee_user_id,
+             "assignee_team_id" in payload.model_fields_set,payload.assignee_team_id,payload.supplier_id,payload.supplier_protocol,
              payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,payload.status,
              incident_id,tenant_id,payload.version),
         ).fetchone()

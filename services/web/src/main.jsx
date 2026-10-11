@@ -267,14 +267,22 @@ function DataGrid({
         </thead>
         <tbody>
           {ordered.map((r) => (
-            <tr key={r.id} onDoubleClick={() => onRow?.(r)}>
+            <tr
+              key={r.id}
+              className={onRow ? "selectable-row" : undefined}
+              onClick={() => onRow?.(r)}
+              tabIndex={onRow ? 0 : undefined}
+              onKeyDown={(e) => {
+                if (onRow && (e.key === "Enter" || e.key === " ")) onRow(r);
+              }}
+            >
               {columns.map((c) => (
                 <td key={c.key}>
                   {c.render ? c.render(r) : (r[c.key] ?? "—")}
                 </td>
               ))}
               {actions && (
-                <td>
+                <td onClick={(e) => e.stopPropagation()}>
                   <div className="row-actions">{actions(r)}</div>
                 </td>
               )}
@@ -1395,10 +1403,11 @@ function App() {
             </section>
           )}
           {view === "incidents" && (
-            <div className={`split-view ${detail ? "with-detail" : "single"}`}>
+            <div className="incident-screen">
+              {!detail ? (
               <section className="panel">
                 <h2>Incidentes</h2>
-                <p>Clique duas vezes numa linha para abrir os detalhes.</p>
+                <p>Selecione uma linha para abrir a tela de atendimento do incidente.</p>
                 <DataGrid
                   columns={incidentCols}
                   rows={incidents}
@@ -1413,11 +1422,14 @@ function App() {
                   )}
                 />
               </section>
-              {detail && (
-                <section className="panel incident-detail">
+              ) : (
+                <section className="panel incident-detail-page">
                   <div className="section-head">
-                    <h2>{detail.incident.title}</h2>
-                    <button onClick={() => setDetail(null)}>Fechar</button>
+                    <div>
+                      <button className="back-button" onClick={() => { setDetail(null); setSelected(null); }}>← Voltar para incidentes</button>
+                      <h2>{detail.incident.title}</h2>
+                      <p>Atendimento, responsáveis, prazos e histórico do incidente.</p>
+                    </div>
                   </div>
                   <div className="detail-grid">
                     <span>
@@ -1496,11 +1508,10 @@ function App() {
                       <select
                         defaultValue={detail.incident.assignee_team_id || ""}
                         onChange={(e) =>
-                          e.target.value &&
                           updateIncident(
                             detail.incident,
                             detail.incident.status,
-                            { assignee_team_id: e.target.value },
+                            { assignee_team_id: e.target.value || null },
                           )
                         }
                       >
@@ -1519,11 +1530,10 @@ function App() {
                       <select
                         defaultValue={detail.incident.assignee_user_id || ""}
                         onChange={(e) =>
-                          e.target.value &&
                           updateIncident(
                             detail.incident,
                             detail.incident.status,
-                            { assignee_user_id: e.target.value },
+                            { assignee_user_id: e.target.value || null },
                           )
                         }
                       >
@@ -1559,6 +1569,30 @@ function App() {
                       </select>
                     </label>
                   </div>
+                  <h3>Dados do incidente</h3>
+                  <form
+                    key={`incident-data-${detail.incident.id}-${detail.incident.version}`}
+                    className="incident-data-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const f = new FormData(e.currentTarget);
+                      updateIncident(detail.incident, detail.incident.status, {
+                        title: f.get("title"),
+                        description: f.get("description") || null,
+                        category: f.get("category") || null,
+                        supplier_protocol: f.get("supplier_protocol") || null,
+                      });
+                    }}
+                  >
+                    <Input name="title" label="Título" defaultValue={detail.incident.title} required />
+                    <Input name="category" label="Categoria" defaultValue={detail.incident.category || ""} />
+                    <Input name="supplier_protocol" label="Protocolo do fornecedor" defaultValue={detail.incident.supplier_protocol || ""} />
+                    <label className="field incident-description">
+                      <span>Descrição detalhada</span>
+                      <textarea name="description" defaultValue={detail.incident.description || ""} rows="5" />
+                    </label>
+                    <div className="incident-form-actions"><button>Salvar detalhes</button></div>
+                  </form>
                   <h3>Comentários</h3>
                   {detail.comments.map((c) => (
                     <article className="timeline" key={c.id}>

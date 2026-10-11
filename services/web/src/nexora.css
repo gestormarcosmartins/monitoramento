@@ -431,18 +431,18 @@ nav button.active {
 .ops-grid .wide-panel {
   grid-column: 1/-1;
 }
-.split-view {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(390px, 0.65fr);
-  gap: 20px;
-  align-items: start;
-}
-.incident-detail {
-  position: sticky;
-  top: 20px;
-  max-height: calc(100vh - 130px);
-  overflow: auto;
-}
+.incident-screen { width: 100%; min-width: 0; }
+.incident-detail-page { width: 100%; max-width: none; }
+.incident-detail-page .detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.incident-detail-page .incident-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.incident-data-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 14px 0 28px; padding: 18px; border: 1px solid var(--nx-border); border-radius: 10px; background: #f8fafc; }
+.incident-data-form .incident-description { grid-column: 1 / -1; }
+.incident-data-form textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; resize: vertical; font: inherit; }
+.incident-form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.back-button { margin-bottom: 14px; color: var(--nx-blue); background: transparent; padding: 0; }
+.selectable-row { cursor: pointer; }
+.selectable-row:hover { background: #f1f5f9; }
+.selectable-row:focus-visible { outline: 2px solid var(--nx-blue); outline-offset: -2px; }
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -544,19 +544,20 @@ nav button.active {
   color: #166534;
 }
 @media (max-width: 1200px) {
-  .split-view {
-    grid-template-columns: 1fr;
-  }
-  .incident-detail {
-    position: static;
-    max-height: none;
-  }
+  .incident-detail-page .detail-grid,
+  .incident-detail-page .incident-controls,
+  .incident-data-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-grid {
     grid-template-columns: 1fr;
   }
   .ops-grid .wide-panel {
     grid-column: auto;
   }
+}
+@media (max-width: 720px) {
+  .incident-detail-page .detail-grid,
+  .incident-detail-page .incident-controls,
+  .incident-data-form { grid-template-columns: 1fr; }
 }
 
 /* Nexora interface alignment — shared across every operational screen */
