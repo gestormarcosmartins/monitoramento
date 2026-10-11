@@ -25,6 +25,46 @@ const authConfig = {
           .padEnd(Math.ceil(t.split(".")[1].length / 4) * 4, "="),
       ),
     );
+let refreshPromise = null;
+function storeTokens(tokens) {
+  sessionStorage.setItem("access_token", tokens.access_token);
+  if (tokens.refresh_token) sessionStorage.setItem("refresh_token", tokens.refresh_token);
+  if (tokens.id_token) sessionStorage.setItem("id_token", tokens.id_token);
+  return tokens.access_token;
+}
+async function refreshAccessToken() {
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = sessionStorage.getItem("refresh_token");
+  if (!refreshToken) throw Error("Sessão sem credencial de renovação");
+  refreshPromise = fetch(`${authConfig.realmUrl}/protocol/openid-connect/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: authConfig.clientId,
+      refresh_token: refreshToken,
+    }),
+  })
+    .then(async (response) => {
+      if (!response.ok) throw Error("Não foi possível renovar a sessão");
+      return storeTokens(await response.json());
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+async function validAccessToken(force = false) {
+  const current = sessionStorage.getItem("access_token");
+  if (!current) throw Error("Sessão não iniciada");
+  try {
+    const expiresAt = Number(parseToken(current).exp || 0) * 1000;
+    if (!force && expiresAt > Date.now() + 120000) return current;
+  } catch {
+    if (!force) return refreshAccessToken();
+  }
+  return refreshAccessToken();
+}
 async function startLogin() {
   const v = randomValue(),
     c = encode(
@@ -42,7 +82,15 @@ async function startLogin() {
 async function finishLogin() {
   const q = new URLSearchParams(location.search),
     code = q.get("code");
-  if (!code) return sessionStorage.getItem("access_token");
+  if (!code) {
+    const existing = sessionStorage.getItem("access_token");
+    if (existing && !sessionStorage.getItem("refresh_token")) {
+      sessionStorage.removeItem("access_token");
+      sessionStorage.removeItem("id_token");
+      return null;
+    }
+    return existing ? validAccessToken() : null;
+  }
   if (q.get("state") !== sessionStorage.getItem("oidc_state"))
     throw Error("Estado de login inválido");
   const r = await fetch(
@@ -61,8 +109,7 @@ async function finishLogin() {
   );
   if (!r.ok) throw Error("Não foi possível concluir o login");
   const t = await r.json();
-  sessionStorage.setItem("access_token", t.access_token);
-  sessionStorage.setItem("id_token", t.id_token || "");
+  storeTokens(t);
   history.replaceState({}, document.title, "/");
   return t.access_token;
 }
@@ -77,19 +124,18 @@ function logout() {
   location.assign(`${authConfig.realmUrl}/protocol/openid-connect/logout?${q}`);
 }
 async function api(path, token, options = {}, tenant = "") {
-  const r = await fetch(path, {
+  const request = (accessToken) => fetch(path, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       ...(tenant ? { "X-Tenant-ID": tenant } : {}),
       ...(options.headers || {}),
     },
   });
-  if (r.status === 401) {
-    sessionStorage.clear();
-    throw Error("Sua sessão expirou");
-  }
+  let r = await request(await validAccessToken());
+  if (r.status === 401) r = await request(await validAccessToken(true));
+  if (r.status === 401) throw Error("Não foi possível renovar sua sessão");
   if (r.status === 204) return null;
   const b = await r.json();
   if (!r.ok)
@@ -641,6 +687,10 @@ function App() {
     if (token) {
       refreshTenants();
       refreshDashboard();
+      const timer = setInterval(() => {
+        validAccessToken().then(setToken).catch(() => {});
+      }, 60000);
+      return () => clearInterval(timer);
     }
   }, [token]);
   useEffect(() => {
