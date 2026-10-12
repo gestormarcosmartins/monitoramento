@@ -6,10 +6,16 @@ namespace Nexora.Agent;
 
 public sealed class CentralClient
 {
+    // sql-server-direct is reported only when this install actually has SQL Server
+    // configured: Central auto-provisions a set of SQL monitors for any agent that
+    // declares this capability, and a blanket static capability would create those
+    // monitors (permanently stuck at "unknown") on machines with no SQL Server at all.
 #if CHAVEOU_AGENT
-    private static readonly string[] AgentCapabilities = ["host-health", "chaveou-monitor", "postgresql-direct", "offline-queue"];
+    private string[] AgentCapabilities => ["host-health", "chaveou-monitor", "postgresql-direct", "offline-queue"];
 #else
-    private static readonly string[] AgentCapabilities = ["host-health", "windows-services", "sql-server-direct", "offline-queue"];
+    private string[] AgentCapabilities => _options.SqlEnabled
+        ? ["host-health", "windows-services", "sql-server-direct", "offline-queue"]
+        : ["host-health", "windows-services", "offline-queue"];
 #endif
     private readonly HttpClient _http;
     private readonly AgentOptions _options;
