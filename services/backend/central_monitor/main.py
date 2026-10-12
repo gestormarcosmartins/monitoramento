@@ -360,13 +360,19 @@ def dashboard_noc(tenant_ids: str | None = Query(default=None), identity: Identi
                 "SELECT id,name,kind,criticality FROM cm_assets WHERE tenant_id=%s AND active ORDER BY name", (tenant_id,)
             ).fetchall())
             monitors = list(connection.execute(
-                """SELECT id,asset_id,name,monitor_type,active,last_status,last_checked_at,interval_seconds
+                """SELECT id,asset_id,name,monitor_type,active,last_status,last_checked_at,interval_seconds,severity
                 FROM cm_monitors WHERE tenant_id=%s ORDER BY name""", (tenant_id,)
+            ).fetchall())
+            maintenance = list(connection.execute(
+                """SELECT asset_id FROM cm_maintenance_windows
+                WHERE tenant_id=%s AND active AND now() BETWEEN starts_at AND ends_at""", (tenant_id,)
             ).fetchall())
             open_alerts = {str(row["asset_id"]): row["total"] for row in connection.execute(
                 """SELECT m.asset_id,count(*) AS total FROM cm_alerts al JOIN cm_monitors m ON m.id=al.monitor_id
                 WHERE al.tenant_id=%s AND al.status='open' GROUP BY m.asset_id""", (tenant_id,)
             ).fetchall()}
+        tenant_in_maintenance = any(row["asset_id"] is None for row in maintenance)
+        assets_in_maintenance = {str(row["asset_id"]) for row in maintenance if row["asset_id"] is not None}
         for asset in assets:
             asset_id = str(asset["id"])
             services = []
@@ -375,36 +381,41 @@ def dashboard_noc(tenant_ids: str | None = Query(default=None), identity: Identi
                     continue
                 checked = monitor["last_checked_at"]
                 stale = checked is None or (now - checked).total_seconds() > max(300, 3 * int(monitor["interval_seconds"]))
+                # Section 5 of the monitoring spec: a monitor without reliable data is never counted as OK; a failed
+                # critical monitor is "stopped" (red) while a failed non-critical one is only an "alert" (yellow).
+                critical = monitor["severity"] in ("high", "disaster")
                 if not monitor["active"]:
                     state = "inactive"
                 elif stale or monitor["last_status"] == "unknown":
-                    state = "no_communication"
+                    state = "unknown"
+                elif monitor["last_status"] == "down":
+                    state = "stopped" if critical else "alert"
                 else:
-                    state = "failed" if monitor["last_status"] == "down" else "healthy"
+                    state = "ok"
                 services.append({"id": str(monitor["id"]), "name": monitor["name"], "type": monitor["monitor_type"], "state": state,
-                                 "last_checked_at": checked})
+                                 "critical": critical, "last_checked_at": checked})
             active = [item for item in services if item["state"] != "inactive"]
-            failed = sum(1 for item in active if item["state"] == "failed")
-            silent = sum(1 for item in active if item["state"] == "no_communication")
+            counts = {key: sum(1 for item in active if item["state"] == key) for key in ("ok", "stopped", "alert", "unknown")}
             alerts = int(open_alerts.get(asset_id, 0))
-            if not active or silent == len(active):
-                status_value = "no_communication"
-            elif failed:
+            in_maintenance = tenant_in_maintenance or asset_id in assets_in_maintenance
+            if in_maintenance:
+                status_value = "maintenance"
+            elif not active or counts["unknown"] == len(active):
+                status_value = "unknown"
+            elif counts["stopped"]:
                 status_value = "critical"
-            elif silent or alerts:
+            elif counts["alert"] or counts["unknown"] or alerts:
                 status_value = "attention"
             else:
-                status_value = "operational"
+                status_value = "healthy"
             checks = [item["last_checked_at"] for item in active if item["last_checked_at"]]
             cards.append({
                 "asset_id": asset_id, "environment": asset["name"], "kind": asset["kind"], "criticality": asset["criticality"],
                 "company_id": tenant_id, "company": tenant["name"], "status": status_value,
-                "services_total": len(active), "services_failed": failed, "services_no_communication": silent,
-                "open_alerts": alerts,
-                "availability": round((len(active) - failed - silent) / len(active) * 100, 1) if active else None,
+                "services_total": len(active), "counts": counts, "open_alerts": alerts,
                 "last_checked_at": max(checks) if checks else None, "services": services,
             })
-    order = {"critical": 0, "attention": 1, "no_communication": 2, "operational": 3}
+    order = {"critical": 0, "attention": 1, "unknown": 2, "maintenance": 3, "healthy": 4}
     cards.sort(key=lambda card: (order[card["status"]], card["company"], card["environment"], card["asset_id"]))
     summary = {key: sum(1 for card in cards if card["status"] == key) for key in order}
     return {"summary": {"companies": len({card["company_id"] for card in cards}), "environments": len(cards),
