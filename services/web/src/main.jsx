@@ -1108,8 +1108,8 @@ function DatabasePerformance() {
   </>}</div>;
 }
 
-const nocStatusLabels = { healthy: "Saudável", attention: "Atenção", critical: "Crítico", unknown: "Desconhecido", maintenance: "Em manutenção" },
-  nocServiceLabels = { ok: "OK", stopped: "Parado", alert: "Alerta", unknown: "Sem dados", inactive: "Inativo" },
+const nocStatusLabels = { critical: "Crítico", attention: "Atenção", operational: "Operacional", no_communication: "Sem comunicação" },
+  nocServiceLabels = { healthy: "OK", failed: "Falha", no_communication: "Sem dados", inactive: "Inativo" },
   nocCriticalityLabels = { critical: "Crítica", high: "Alta", medium: "Média", low: "Baixa" };
 function NocDashboard({ data, loading, onRetry }) {
   const [search, setSearch] = useState(""), [company, setCompany] = useState(""), [status, setStatus] = useState(""), [criticality, setCriticality] = useState(""), [onlyProblems, setOnlyProblems] = useState(false), [mode, setMode] = useState("cards");
@@ -1126,7 +1126,7 @@ function NocDashboard({ data, loading, onRetry }) {
   const term = search.trim().toLowerCase();
   const rows = environments.filter((item) => (!term || `${item.environment} ${item.company}`.toLowerCase().includes(term))
     && (!company || item.company_id === company) && (!status || item.status === status)
-    && (!criticality || item.criticality === criticality) && (!onlyProblems || item.status !== "healthy"));
+    && (!criticality || item.criticality === criticality) && (!onlyProblems || item.status !== "operational"));
   const filters = [search && ["Busca", search, () => setSearch("")], company && ["Empresa", companies.find(([id]) => id === company)?.[1], () => setCompany("")], status && ["Status", nocStatusLabels[status], () => setStatus("")], criticality && ["Criticidade", nocCriticalityLabels[criticality], () => setCriticality("")], onlyProblems && ["Filtro", "Somente com problemas", () => setOnlyProblems(false)]].filter(Boolean);
   const clear = () => { setSearch(""); setCompany(""); setStatus(""); setCriticality(""); setOnlyProblems(false); };
   const fmtTime = (value) => value ? new Date(value).toLocaleString("pt-BR") : "—";
@@ -1137,8 +1137,7 @@ function NocDashboard({ data, loading, onRetry }) {
       { label: "Serviços monitorados", value: summary.services ?? "—" },
       { label: "Ambientes críticos", value: summary.critical ?? "—" },
       { label: "Em atenção", value: summary.attention ?? "—" },
-      { label: "Desconhecidos", value: summary.unknown ?? "—" },
-      { label: "Em manutenção", value: summary.maintenance ?? "—" },
+      { label: "Sem comunicação", value: summary.no_communication ?? "—" },
     ]} />
     <FilterBar title="Filtros do NOC">
       <label>Busca<input type="search" placeholder="Buscar empresa ou ambiente" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
@@ -1156,14 +1155,14 @@ function NocDashboard({ data, loading, onRetry }) {
           return <article className={`noc-card ${item.status} ${open ? "open" : ""}`} key={item.asset_id}>
             <header><div><strong>{item.environment}</strong><small>{item.company}</small></div><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></header>
             <button type="button" className="noc-card-toggle" aria-expanded={open} onClick={() => toggleExpanded(item.asset_id)}>
-              <p className="noc-card-meta noc-counts" aria-label="Contagem de monitores"><span className="ok"><b>{item.counts.ok}</b> OK</span><span className="stopped"><b>{item.counts.stopped}</b> parados</span><span className="alert"><b>{item.counts.alert}</b> em alerta</span><span className="unknown"><b>{item.counts.unknown}</b> desconhecidos</span></p>
+              <p className="noc-card-meta"><b>{item.services_total}</b> serviço(s) · {item.availability == null ? "—" : `${item.availability}%`} operacional{item.services_failed ? ` · ${item.services_failed} em falha` : ""}</p>
               <ActionIcon name={open ? "chevron-up" : "chevron-down"} />
             </button>
             {open && <ul className="noc-services">{item.services.map((service) => <li key={service.id} className={service.state} title={`${service.name}: ${nocServiceLabels[service.state]}`}><i aria-hidden="true" />{service.name}<span>{nocServiceLabels[service.state]}</span></li>)}</ul>}
             <footer><span>Atualizado: {fmtTime(item.last_checked_at)}</span>{item.open_alerts > 0 && <span>{item.open_alerts} alerta(s) aberto(s)</span>}</footer>
           </article>;
         })}</div>
-      : <div className="noc-table-wrap"><table className="noc-table"><thead><tr><th>Status</th><th>Empresa</th><th>Ambiente</th><th>Criticidade</th><th>OK</th><th>Parados</th><th>Em alerta</th><th>Desconhecidos</th><th>Alertas abertos</th><th>Última coleta</th></tr></thead><tbody>{rows.map((item) => <tr key={item.asset_id}><td><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></td><td>{item.company}</td><td>{item.environment}</td><td>{nocCriticalityLabels[item.criticality]}</td><td>{item.counts.ok}</td><td>{item.counts.stopped}</td><td>{item.counts.alert}</td><td>{item.counts.unknown}</td><td>{item.open_alerts}</td><td>{fmtTime(item.last_checked_at)}</td></tr>)}</tbody></table></div>}
+      : <div className="noc-table-wrap"><table className="noc-table"><thead><tr><th>Status</th><th>Empresa</th><th>Ambiente</th><th>Criticidade</th><th>Serviços</th><th>Em falha</th><th>Sem dados</th><th>Alertas</th><th>Última coleta</th></tr></thead><tbody>{rows.map((item) => <tr key={item.asset_id}><td><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></td><td>{item.company}</td><td>{item.environment}</td><td>{nocCriticalityLabels[item.criticality]}</td><td>{item.services_total}</td><td>{item.services_failed}</td><td>{item.services_no_communication}</td><td>{item.open_alerts}</td><td>{fmtTime(item.last_checked_at)}</td></tr>)}</tbody></table></div>}
   </section>;
 }
 function App() {
