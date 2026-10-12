@@ -207,6 +207,7 @@ const menu = [
   ],
   dashboardMenu = [
     ["overview", "Visão Geral", "home"],
+    ["noc", "NOC", "activity"],
     ["databases", "Monitoramento Banco de Dados", "database"],
   ],
   portalMenu = [
@@ -1106,6 +1107,51 @@ function DatabasePerformance() {
   </>}</div>;
 }
 
+const nocStatusLabels = { critical: "Crítico", attention: "Atenção", operational: "Operacional", no_communication: "Sem comunicação" },
+  nocServiceLabels = { healthy: "OK", failed: "Falha", no_communication: "Sem dados", inactive: "Inativo" },
+  nocCriticalityLabels = { critical: "Crítica", high: "Alta", medium: "Média", low: "Baixa" };
+function NocDashboard({ data, loading, onRetry }) {
+  const [search, setSearch] = useState(""), [company, setCompany] = useState(""), [status, setStatus] = useState(""), [criticality, setCriticality] = useState(""), [onlyProblems, setOnlyProblems] = useState(false), [mode, setMode] = useState("cards");
+  if (loading && !data) return <Loading title="Carregando o painel NOC..." />;
+  if (!data) return <Unavailable title="Não foi possível carregar o painel NOC." onRetry={onRetry} />;
+  const environments = data.environments || [], summary = data.summary || {};
+  const companies = [...new Map(environments.map((item) => [item.company_id, item.company])).entries()];
+  const term = search.trim().toLowerCase();
+  const rows = environments.filter((item) => (!term || `${item.environment} ${item.company}`.toLowerCase().includes(term))
+    && (!company || item.company_id === company) && (!status || item.status === status)
+    && (!criticality || item.criticality === criticality) && (!onlyProblems || item.status !== "operational"));
+  const filters = [search && ["Busca", search, () => setSearch("")], company && ["Empresa", companies.find(([id]) => id === company)?.[1], () => setCompany("")], status && ["Status", nocStatusLabels[status], () => setStatus("")], criticality && ["Criticidade", nocCriticalityLabels[criticality], () => setCriticality("")], onlyProblems && ["Filtro", "Somente com problemas", () => setOnlyProblems(false)]].filter(Boolean);
+  const clear = () => { setSearch(""); setCompany(""); setStatus(""); setCriticality(""); setOnlyProblems(false); };
+  const fmtTime = (value) => value ? new Date(value).toLocaleString("pt-BR") : "—";
+  return <section className="noc-page">
+    <MetricGroup items={[
+      { label: "Empresas monitoradas", value: summary.companies ?? "—" },
+      { label: "Ambientes", value: summary.environments ?? "—" },
+      { label: "Serviços monitorados", value: summary.services ?? "—" },
+      { label: "Ambientes críticos", value: summary.critical ?? "—" },
+      { label: "Em atenção", value: summary.attention ?? "—" },
+      { label: "Sem comunicação", value: summary.no_communication ?? "—" },
+    ]} />
+    <FilterBar title="Filtros do NOC">
+      <label>Busca<input type="search" placeholder="Buscar empresa ou ambiente" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+      <label>Empresa<select value={company} onChange={(e) => setCompany(e.target.value)}><option value="">Todas as empresas</option>{companies.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+      <label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos os status</option>{Object.entries(nocStatusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label>Criticidade<select value={criticality} onChange={(e) => setCriticality(e.target.value)}><option value="">Todas</option>{Object.entries(nocCriticalityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label className="noc-toggle"><input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />Somente com problemas</label>
+      <div className="noc-mode" role="group" aria-label="Modo de visualização">{[["cards", "Cards"], ["table", "Painel NOC"]].map(([key, label]) => <button type="button" key={key} className={mode === key ? "active" : ""} aria-pressed={mode === key} onClick={() => setMode(key)}>{label}</button>)}</div>
+    </FilterBar>
+    {filters.length > 0 && <div className="noc-chips">{filters.map(([label, value, remove]) => <button type="button" key={label} onClick={remove} aria-label={`Remover filtro ${label}: ${value}`}>{label}: {value} ×</button>)}<button type="button" className="link" onClick={clear}>Limpar</button></div>}
+    <p className="noc-count" aria-live="polite">{rows.length} de {environments.length} ambiente(s)</p>
+    {!environments.length ? <Empty>Nenhum ambiente monitorado nas empresas autorizadas.</Empty> : !rows.length ? <NoResults description="Ajuste ou limpe os filtros." /> : mode === "cards"
+      ? <div className="noc-grid">{rows.map((item) => <article className={`noc-card ${item.status}`} key={item.asset_id}>
+          <header><div><strong>{item.environment}</strong><small>{item.company}</small></div><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></header>
+          <p className="noc-card-meta"><b>{item.services_total}</b> serviço(s) · {item.availability == null ? "—" : `${item.availability}%`} operacional{item.services_failed ? ` · ${item.services_failed} em falha` : ""}</p>
+          <ul className="noc-services">{item.services.map((service) => <li key={service.id} className={service.state} title={`${service.name}: ${nocServiceLabels[service.state]}`}><i aria-hidden="true" />{service.name}<span>{nocServiceLabels[service.state]}</span></li>)}</ul>
+          <footer><span>Atualizado: {fmtTime(item.last_checked_at)}</span>{item.open_alerts > 0 && <span>{item.open_alerts} alerta(s) aberto(s)</span>}</footer>
+        </article>)}</div>
+      : <div className="noc-table-wrap"><table className="noc-table"><thead><tr><th>Status</th><th>Empresa</th><th>Ambiente</th><th>Criticidade</th><th>Serviços</th><th>Em falha</th><th>Sem dados</th><th>Alertas</th><th>Última coleta</th></tr></thead><tbody>{rows.map((item) => <tr key={item.asset_id}><td><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></td><td>{item.company}</td><td>{item.environment}</td><td>{nocCriticalityLabels[item.criticality]}</td><td>{item.services_total}</td><td>{item.services_failed}</td><td>{item.services_no_communication}</td><td>{item.open_alerts}</td><td>{fmtTime(item.last_checked_at)}</td></tr>)}</tbody></table></div>}
+  </section>;
+}
 function App() {
   const [token, setToken] = useState(""),
     [currentUser, setCurrentUser] = useState(null),
@@ -1170,7 +1216,8 @@ function App() {
     [operationalSubmitting, setOperationalSubmitting] = useState(false),
     [integrationCommands, setIntegrationCommands] = useState({items:[],totals:[],metrics:{}}),
     [integrationCommandFilter, setIntegrationCommandFilter] = useState("all"),
-    [dashboard, setDashboard] = useState({ totals: {}, companies: [] });
+    [dashboard, setDashboard] = useState({ totals: {}, companies: [] }),
+    [noc, setNoc] = useState(null), [nocLoading, setNocLoading] = useState(false);
   const captureError = (exception) => {
     setError(exception?.message || "Não foi possível concluir a operação.");
     setErrorStatus(Number(exception?.status || 0));
@@ -1511,6 +1558,11 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                 "";
         });
       }),
+    refreshNoc = () => {
+      const query = dashboardTenantIds.length ? `?tenant_ids=${encodeURIComponent(dashboardTenantIds.join(","))}` : "";
+      setNocLoading(true);
+      return api(`/api/v1/dashboard/noc${query}`, token).then(setNoc).finally(() => setNocLoading(false));
+    },
     refreshDashboard = () => {
       const query = dashboardTenantIds.length ? `?tenant_ids=${encodeURIComponent(dashboardTenantIds.join(","))}` : "";
       return api(`/api/v1/dashboard${query}`, token).then(setDashboard);
@@ -1598,10 +1650,13 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
     await loadDatabaseSelection(selectedId, sources);
   };
   const refreshCurrentView = async () => {
-    if (!tenantId && view !== "clients" && view !== "overview") return;
+    if (!tenantId && view !== "clients" && view !== "overview" && view !== "noc") return;
     switch (view) {
       case "overview":
         await refreshDashboard();
+        break;
+      case "noc":
+        await refreshNoc();
         break;
       case "clients":
         await Promise.all([refreshTenants(), refreshDashboard()]);
@@ -1882,7 +1937,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
     openPortalTicket({ id: route.portalTicketId }, false);
   }, [token, tenantId, view, routePath, portalTicketDetail?.ticket?.id]);
   useEffect(() => {
-    if (view === "overview" || tenantId || !tenants.length) return;
+    if (view === "overview" || view === "noc" || tenantId || !tenants.length) return;
     const saved = localStorage.getItem("nexora_tenant");
     const fallback = tenants.find((item) => item.id === saved && item.active)
       || tenants.find((item) => item.slug === "morada" && item.active)
@@ -1895,6 +1950,9 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
   useEffect(() => {
     if (token && view === "overview") refreshDashboard().then(() => setLastUpdatedAt(new Date())).catch(captureError);
   }, [dashboardTenantIds]);
+  useEffect(() => {
+    if (token && view === "noc") refreshNoc().then(() => setLastUpdatedAt(new Date())).catch(captureError);
+  }, [token, view, dashboardTenantIds]);
   useEffect(() => {
     const label = allNavigationItems.find((item) => item[0] === view)?.[1] || "Nexora";
     document.title = `${label} | Nexora`;
@@ -2222,7 +2280,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
             Nexora <b>›</b>
             <strong>{allNavigationItems.find((x) => x[0] === view)?.[1]}</strong>
           </div>
-          {view === "overview" ? (
+          {view === "overview" || view === "noc" ? (
             <div className="topbar-company-filter">
               <button className="topbar-company-trigger" onClick={() => setDashboardCompanyFilterOpen((value) => !value)}>
                 <NavIcon name="building" />
@@ -2264,7 +2322,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
             <div>
               {view === "monitors" && <small>MONITORAMENTO</small>}
               <h1>{view === "overview" ? <>Dashboard <span className="overview-title">(Visão geral da operação)</span></> : allNavigationItems.find((x) => x[0] === view)?.[1]} {view === "monitors" && tenant?.name ? <span>({tenant.name})</span> : null}</h1>
-              <p>{view === "overview" ? "Acompanhe a saúde dos ambientes, serviços e incidentes em tempo real." : view === "monitors" ? "Monitore e gerencie os serviços do ambiente. Os dados são coletados automaticamente." : (tenant?.name || "Visão consolidada da operação")}</p>
+              <p>{view === "overview" ? "Acompanhe a saúde dos ambientes, serviços e incidentes em tempo real." : view === "noc" ? "Painel operacional de todos os ambientes monitorados: identifique falhas e priorize a atuação." : view === "monitors" ? "Monitore e gerencie os serviços do ambiente. Os dados são coletados automaticamente." : (tenant?.name || "Visão consolidada da operação")}</p>
             </div>
             {view === "databases" && databaseSources.length > 0 && <label className="database-selector database-header-selector"><span>Bancos monitorados</span><select value={selectedDatabaseId} onChange={async (e) => { const value = e.target.value; setSelectedDatabaseId(value); await loadDatabaseSelection(value); }}>
               <option value="all">Todos os bancos ({databaseSources.length})</option>
@@ -2770,6 +2828,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
               />
             </section>
           )}
+          {view === "noc" && <NocDashboard data={noc} loading={nocLoading} onRetry={() => refreshNoc().catch(captureError)} />}
           {view === "databases" && (
             <section className="database-workspace">
               <div className="section-head database-heading">

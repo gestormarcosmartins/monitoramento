@@ -1885,3 +1885,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .shared-page-actions button, .state-view button { width: 100%; min-height: 44px; }
   .shared-filter-fields { grid-template-columns: 1fr; }
 }
+
+/* NOC dashboard */
+.noc-page { display: grid; gap: 16px; }
+.noc-page .metric-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.noc-page .shared-filter-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.noc-page .shared-filter-fields label { display: grid; gap: 4px; font-size: 13px; color: #64748B; min-width: 160px; flex: 1 1 160px; }
+.noc-page .shared-filter-fields input[type="search"], .noc-page .shared-filter-fields select { min-height: 40px; }
+.noc-page .noc-toggle { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-height: 44px; }
+.noc-mode { display: flex; }
+.noc-mode button { min-height: 44px; padding: 0 16px; border: 1px solid #E2E8F0; background: #fff; color: #0F172A; }
+.noc-mode button:first-child { border-radius: 8px 0 0 8px; }
+.noc-mode button:last-child { border-radius: 0 8px 8px 0; }
+.noc-mode button.active { background: #2563FF; border-color: #2563FF; color: #fff; }
+.noc-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.noc-chips button { min-height: 36px; padding: 0 12px; border: 1px solid #E2E8F0; border-radius: 999px; background: #fff; color: #0F172A; }
+.noc-chips button.link { border: 0; background: none; color: #2563FF; }
+.noc-count { margin: 0; color: #64748B; }
+.noc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 16px; }
+.noc-card { display: grid; gap: 12px; align-content: start; padding: 16px; border: 1px solid #E2E8F0; border-top: 4px solid #22C55E; border-radius: 12px; background: #fff; }
+.noc-card.critical { border-top-color: #EF4444; }
+.noc-card.attention { border-top-color: #F59E0B; }
+.noc-card.no_communication { border-top-color: #64748B; }
+.noc-card header { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.noc-card header strong, .noc-card header small { display: block; overflow-wrap: anywhere; }
+.noc-card header small { color: #64748B; }
+.noc-card-meta { margin: 0; color: #0F172A; font-size: 14px; }
+.noc-badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; background: #DCFCE7; color: #166534; }
+.noc-badge.critical { background: #FEE2E2; color: #991B1B; }
+.noc-badge.attention { background: #FEF3C7; color: #92400E; }
+.noc-badge.no_communication { background: #E2E8F0; color: #334155; }
+.noc-services { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.noc-services li { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 12px; background: #F8FAFC; }
+.noc-services li i { width: 8px; height: 8px; border-radius: 50%; background: #22C55E; }
+.noc-services li.failed i { background: #EF4444; }
+.noc-services li.no_communication i { background: #64748B; }
+.noc-services li.inactive i { background: #CBD5E1; }
+.noc-services li span { color: #64748B; }
+.noc-card footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: #64748B; font-size: 12px; }
+.noc-table-wrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 12px; background: #fff; }
+.noc-table { width: 100%; border-collapse: collapse; }
+.noc-table th, .noc-table td { padding: 12px; text-align: left; border-bottom: 1px solid #E2E8F0; }
+@media (max-width: 1024px) { .noc-page .metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .noc-page .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

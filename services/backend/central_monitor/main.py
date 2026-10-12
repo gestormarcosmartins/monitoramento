@@ -342,6 +342,76 @@ def dashboard(tenant_ids: str | None = Query(default=None), identity: Identity =
             "environments": environments[:8]}
 
 
+@app.get("/api/v1/dashboard/noc", tags=["dashboard"])
+def dashboard_noc(tenant_ids: str | None = Query(default=None), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    """Read-only NOC view: one card per environment, limited to the caller's authorized companies."""
+    tenants = me(identity)["tenants"]
+    selected = {value for value in (tenant_ids or "").split(",") if value}
+    if selected:
+        tenants = [tenant for tenant in tenants if str(tenant["id"]) in selected]
+    now = datetime.now(UTC)
+    cards: list[dict[str, Any]] = []
+    for tenant in tenants:
+        if not tenant["active"]:
+            continue
+        tenant_id = str(tenant["id"])
+        with tenant_connection(tenant_id) as connection:
+            assets = list(connection.execute(
+                "SELECT id,name,kind,criticality FROM cm_assets WHERE tenant_id=%s AND active ORDER BY name", (tenant_id,)
+            ).fetchall())
+            monitors = list(connection.execute(
+                """SELECT id,asset_id,name,monitor_type,active,last_status,last_checked_at,interval_seconds
+                FROM cm_monitors WHERE tenant_id=%s ORDER BY name""", (tenant_id,)
+            ).fetchall())
+            open_alerts = {str(row["asset_id"]): row["total"] for row in connection.execute(
+                """SELECT m.asset_id,count(*) AS total FROM cm_alerts al JOIN cm_monitors m ON m.id=al.monitor_id
+                WHERE al.tenant_id=%s AND al.status='open' GROUP BY m.asset_id""", (tenant_id,)
+            ).fetchall()}
+        for asset in assets:
+            asset_id = str(asset["id"])
+            services = []
+            for monitor in monitors:
+                if str(monitor["asset_id"]) != asset_id:
+                    continue
+                checked = monitor["last_checked_at"]
+                stale = checked is None or (now - checked).total_seconds() > max(300, 3 * int(monitor["interval_seconds"]))
+                if not monitor["active"]:
+                    state = "inactive"
+                elif stale or monitor["last_status"] == "unknown":
+                    state = "no_communication"
+                else:
+                    state = "failed" if monitor["last_status"] == "down" else "healthy"
+                services.append({"id": str(monitor["id"]), "name": monitor["name"], "type": monitor["monitor_type"], "state": state,
+                                 "last_checked_at": checked})
+            active = [item for item in services if item["state"] != "inactive"]
+            failed = sum(1 for item in active if item["state"] == "failed")
+            silent = sum(1 for item in active if item["state"] == "no_communication")
+            alerts = int(open_alerts.get(asset_id, 0))
+            if not active or silent == len(active):
+                status_value = "no_communication"
+            elif failed:
+                status_value = "critical"
+            elif silent or alerts:
+                status_value = "attention"
+            else:
+                status_value = "operational"
+            checks = [item["last_checked_at"] for item in active if item["last_checked_at"]]
+            cards.append({
+                "asset_id": asset_id, "environment": asset["name"], "kind": asset["kind"], "criticality": asset["criticality"],
+                "company_id": tenant_id, "company": tenant["name"], "status": status_value,
+                "services_total": len(active), "services_failed": failed, "services_no_communication": silent,
+                "open_alerts": alerts,
+                "availability": round((len(active) - failed - silent) / len(active) * 100, 1) if active else None,
+                "last_checked_at": max(checks) if checks else None, "services": services,
+            })
+    order = {"critical": 0, "attention": 1, "no_communication": 2, "operational": 3}
+    cards.sort(key=lambda card: (order[card["status"]], card["company"], card["environment"], card["asset_id"]))
+    summary = {key: sum(1 for card in cards if card["status"] == key) for key in order}
+    return {"summary": {"companies": len({card["company_id"] for card in cards}), "environments": len(cards),
+                        "services": sum(card["services_total"] for card in cards), **summary},
+            "environments": cards, "generated_at": now}
+
+
 @app.put("/api/v1/tenants/{tenant_id}", tags=["tenants"])
 def update_tenant(tenant_id: str, payload: TenantUpdate, identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     user = authorize_tenant(identity, tenant_id, ("admin",))
