@@ -110,6 +110,37 @@ _SQL_SERVER_MONITORS = (
     ("long-transactions", "Transações longas", "average", 600),
     ("sql-performance", "Desempenho (queries)", "average", 21600),
 )
+_HOST_MONITORS = (
+    # code, suffix, severity, interval_seconds — code must match what
+    # Nexora.Agent/HostCollector.cs (Operational) reads from configuration->>'code'.
+    ("host-cpu", "CPU", "high", 300),
+    ("host-memory", "Memória", "high", 300),
+    ("host-disk", "Espaço em disco", "high", 300),
+    ("host-services", "Serviços essenciais", "disaster", 300),
+)
+
+
+def _ensure_asset(connection: Any, tenant_id: str, agent_name: str) -> Any:
+    """One environment per agent (machine), shared by its host and SQL monitors."""
+    return connection.execute(
+        """INSERT INTO cm_assets(tenant_id,name,kind,address,criticality,metadata)
+        VALUES (%s,%s,'server',%s,'critical',%s)
+        ON CONFLICT(tenant_id,name) DO UPDATE SET active=true
+        RETURNING id""",
+        (tenant_id, agent_name, agent_name, Jsonb({"source": "windows-agent-direct"})),
+    ).fetchone()
+
+
+def _ensure_monitors(connection: Any, tenant_id: str, asset_id: Any, agent_name: str, items: tuple) -> None:
+    for code, label, severity, interval_seconds in items:
+        connection.execute(
+            """INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,
+                interval_seconds,severity,active,last_status,last_message)
+            VALUES (%s,%s,%s,'push',%s,%s,%s,true,'unknown','Aguardando primeiro envio do agente.')
+            ON CONFLICT(tenant_id,name) DO UPDATE SET asset_id=excluded.asset_id,monitor_type=excluded.monitor_type,
+                configuration=excluded.configuration,active=true""",
+            (tenant_id, asset_id, f"{agent_name} - {label}", Jsonb({"source": "windows-agent-direct", "code": code}), interval_seconds, severity),
+        )
 
 
 def _ensure_sql_monitors(connection: Any, tenant_id: str, agent_name: str) -> None:
@@ -119,22 +150,14 @@ def _ensure_sql_monitors(connection: Any, tenant_id: str, agent_name: str) -> No
     nothing and the agent has no monitor_id to attach its SQL results to — this used
     to require running a one-off SQL script by hand after every new SQL agent.
     """
-    asset = connection.execute(
-        """INSERT INTO cm_assets(tenant_id,name,kind,address,criticality,metadata)
-        VALUES (%s,%s,'database',%s,'critical',%s)
-        ON CONFLICT(tenant_id,name) DO UPDATE SET active=true
-        RETURNING id""",
-        (tenant_id, f"{agent_name} - SQL Server", agent_name, Jsonb({"source": "windows-agent-direct"})),
-    ).fetchone()
-    for code, label, severity, interval_seconds in _SQL_SERVER_MONITORS:
-        connection.execute(
-            """INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,
-                interval_seconds,severity,active,last_status,last_message)
-            VALUES (%s,%s,%s,'push',%s,%s,%s,true,'unknown','Aguardando primeiro envio do agente.')
-            ON CONFLICT(tenant_id,name) DO UPDATE SET asset_id=excluded.asset_id,monitor_type=excluded.monitor_type,
-                configuration=excluded.configuration,active=true""",
-            (tenant_id, asset["id"], f"{agent_name} - {label}", Jsonb({"source": "windows-agent-direct", "code": code}), interval_seconds, severity),
-        )
+    asset = _ensure_asset(connection, tenant_id, agent_name)
+    _ensure_monitors(connection, tenant_id, asset["id"], agent_name, _SQL_SERVER_MONITORS)
+
+
+def _ensure_host_monitors(connection: Any, tenant_id: str, agent_name: str) -> None:
+    """Auto-provision the push monitors every Windows agent needs for CPU/memory/disk/services."""
+    asset = _ensure_asset(connection, tenant_id, agent_name)
+    _ensure_monitors(connection, tenant_id, asset["id"], agent_name, _HOST_MONITORS)
 
 
 @router.post("/agent/enroll", status_code=201)
@@ -162,6 +185,8 @@ def enroll(payload: EnrollRequest) -> dict[str, Any]:
             RETURNING id,tenant_id,name,machine_id,configuration""",
             (tenant_id,payload.name,payload.machine_id,_hash(agent_token),payload.version,Jsonb(payload.capabilities),now),
         ).fetchone()
+        if "windows-services" in payload.capabilities:
+            _ensure_host_monitors(connection, tenant_id, payload.name)
         if "sql-server-direct" in payload.capabilities:
             _ensure_sql_monitors(connection, tenant_id, payload.name)
     agent_id = agent.pop("id")

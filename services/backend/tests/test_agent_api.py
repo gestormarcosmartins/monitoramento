@@ -129,8 +129,40 @@ class AgentApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         monitor_inserts = [s for s in connection.statements if s.startswith("INSERT INTO cm_monitors")]
-        self.assertEqual(len(monitor_inserts), 5)
-        self.assertTrue(any("INSERT INTO cm_assets" in s for s in connection.statements))
+        # windows-services (4 host monitors) + sql-server-direct (5 SQL monitors), sharing one asset.
+        self.assertEqual(len(monitor_inserts), 9)
+        self.assertEqual(len([s for s in connection.statements if s.startswith("INSERT INTO cm_assets")]), 2)
+
+    @patch("central_monitor.agent_api.get_settings")
+    def test_enroll_with_host_capability_only_provisions_host_monitors(self, settings) -> None:
+        settings.return_value.central_secret_key = "x" * 32
+        settings.return_value.central_public_url = "https://nexora.example"
+        # A machine with no SQL Server (e.g. a Hyper-V host) should still get its
+        # CPU/memory/disk/service monitors, without the SQL-only ones.
+        connection = EnrollConnection()
+
+        @contextmanager
+        def scoped(_tenant_id):
+            yield connection
+
+        client = TestClient(app)
+        try:
+            with patch("central_monitor.agent_api.tenant_connection", side_effect=scoped):
+                response = client.post(
+                    "/api/v1/agent/enroll",
+                    json={
+                        "enrollment_token": f"{TENANT}.secret",
+                        "name": "Servidor Hyper-V",
+                        "machine_id": "SERVER02:Windows",
+                        "capabilities": ["host-health", "windows-services", "offline-queue"],
+                    },
+                )
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 201)
+        monitor_names = [s for s in connection.statements if s.startswith("INSERT INTO cm_monitors")]
+        self.assertEqual(len(monitor_names), 4)
 
 
 if __name__ == "__main__":

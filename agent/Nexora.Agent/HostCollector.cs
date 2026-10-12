@@ -2,9 +2,24 @@ using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.ServiceProcess;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Nexora.Agent;
+
+public readonly record struct MemoryInfo(
+    [property: System.Text.Json.Serialization.JsonPropertyName("load_percent")] double LoadPercent,
+    [property: System.Text.Json.Serialization.JsonPropertyName("total_bytes")] ulong TotalBytes,
+    [property: System.Text.Json.Serialization.JsonPropertyName("available_bytes")] ulong AvailableBytes,
+    [property: System.Text.Json.Serialization.JsonPropertyName("used_bytes")] ulong UsedBytes);
+
+public readonly record struct ServiceStatus(
+    [property: System.Text.Json.Serialization.JsonPropertyName("name")] string Name,
+    [property: System.Text.Json.Serialization.JsonPropertyName("state")] string State,
+    [property: System.Text.Json.Serialization.JsonPropertyName("ok")] bool Ok,
+    [property: System.Text.Json.Serialization.JsonPropertyName("sub_state")] string? SubState = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("load_state")] string? LoadState = null,
+    [property: System.Text.Json.Serialization.JsonPropertyName("error")] string? Error = null);
 
 public sealed class HostCollector
 {
@@ -39,14 +54,14 @@ public sealed class HostCollector
         catch { return null; }
     }
 
-    private object? Memory()
+    private MemoryInfo? Memory()
     {
         if (OperatingSystem.IsLinux()) return LinuxMemory();
         if(!OperatingSystem.IsWindows())return null;var status=new MemoryStatus{Length=(uint)Marshal.SizeOf<MemoryStatus>()};if(!GlobalMemoryStatusEx(ref status))return null;
-        return new { load_percent=status.Load,total_bytes=status.TotalPhysical,available_bytes=status.AvailablePhysical,used_bytes=status.TotalPhysical-status.AvailablePhysical };
+        return new MemoryInfo(status.Load, status.TotalPhysical, status.AvailablePhysical, status.TotalPhysical-status.AvailablePhysical);
     }
 
-    private static object? LinuxMemory()
+    private static MemoryInfo? LinuxMemory()
     {
         try
         {
@@ -57,7 +72,7 @@ public sealed class HostCollector
             var total = values["MemTotal"];
             var available = values.GetValueOrDefault("MemAvailable", values.GetValueOrDefault("MemFree"));
             var used = total - available;
-            return new { load_percent=Math.Round(used * 100d / Math.Max(1UL,total),1),total_bytes=total,available_bytes=available,used_bytes=used };
+            return new MemoryInfo(Math.Round(used * 100d / Math.Max(1UL,total),1), total, available, used);
         }
         catch { return null; }
     }
@@ -83,7 +98,7 @@ public sealed class HostCollector
         };
     }
 
-    public object[] Services(IEnumerable<string> names)
+    public ServiceStatus[] Services(IEnumerable<string> names)
     {
         return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase)
         .Select(name => {
@@ -92,19 +107,56 @@ public sealed class HostCollector
                 if (OperatingSystem.IsWindows())
                 {
                     using var service = new ServiceController(name.Trim());
-                    return (object)new { name=name.Trim(), state=service.Status.ToString().ToLowerInvariant(), ok=service.Status==ServiceControllerStatus.Running };
+                    return new ServiceStatus(name.Trim(), service.Status.ToString().ToLowerInvariant(), service.Status==ServiceControllerStatus.Running);
                 }
                 if (OperatingSystem.IsLinux()) return LinuxService(name.Trim());
-                return (object)new { name=name.Trim(), state="unsupported", ok=false };
+                return new ServiceStatus(name.Trim(), "unsupported", false);
             }
-            catch (Exception error) { return (object)new { name=name.Trim(), state="unknown", ok=false, error=error.Message }; }
+            catch (Exception error) { return new ServiceStatus(name.Trim(), "unknown", false, Error: error.Message); }
         }).ToArray();
     }
 
-    private static object LinuxService(string name)
+    /// <summary>Compares host metrics/services against the agent's configured push monitors (codes
+    /// host-cpu, host-memory, host-disk, host-services) so they show up as monitor cards, the same
+    /// way SqlServerCollector.OperationalAsync does for SQL checks.</summary>
+    public SnapshotEnvelope? Operational(AgentConfiguration config, IEnumerable<string> essentialServiceNames)
+    {
+        var monitors = config.Monitors.Select(m=>new {m,code=Code(m.Configuration)}).Where(x=>x.code is not null).ToDictionary(x=>x.code!,x=>x.m,StringComparer.OrdinalIgnoreCase);
+        if (monitors.Count == 0) return null;
+        var now = DateTimeOffset.UtcNow;
+        var results = new List<AgentResult>();
+        void Add(string code, bool ok, string message) { if (monitors.TryGetValue(code, out var monitor)) results.Add(new(monitor.Id, ok, ok ? "up" : "down", message, now)); }
+
+        var cpu = CpuPercent();
+        if (cpu is not null) Add("host-cpu", cpu < 90, $"Uso de CPU: {cpu}%");
+
+        var memory = Memory();
+        if (memory is not null) Add("host-memory", memory.Value.LoadPercent < 90, $"Uso de memória: {memory.Value.LoadPercent}%");
+
+        var drives = DriveInfo.GetDrives().Where(d => d.IsReady).ToArray();
+        if (drives.Length > 0)
+        {
+            var low = drives.Where(d => d.AvailableFreeSpace * 100d / Math.Max(1, d.TotalSize) < 10).Select(d => d.Name).ToArray();
+            Add("host-disk", low.Length == 0, low.Length == 0 ? "Espaço em disco normal em todas as unidades" : $"Pouco espaço livre: {string.Join(", ", low)}");
+        }
+
+        var serviceNames = essentialServiceNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
+        if (serviceNames.Length > 0)
+        {
+            var statuses = Services(serviceNames);
+            var down = statuses.Where(s => !s.Ok).Select(s => s.Name).ToArray();
+            Add("host-services", down.Length == 0, down.Length == 0 ? "Todos os serviços essenciais estão ativos" : $"Serviço(s) parado(s): {string.Join(", ", down)}");
+        }
+
+        return results.Count == 0 ? null : new($"host-health-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}", now, results, new(){["source"]="windows-agent-direct",["profile"]="host_health"});
+    }
+
+    private static string? Code(JsonElement e) => e.ValueKind==JsonValueKind.Object&&(e.TryGetProperty("code",out var c)||e.TryGetProperty("check_id",out c))?c.ToString():null;
+
+    private static ServiceStatus LinuxService(string name)
     {
         if (!Regex.IsMatch(name, "^[A-Za-z0-9_.@-]+$"))
-            return new { name, state="invalid", ok=false, error="Nome de unidade systemd inválido." };
+            return new ServiceStatus(name, "invalid", false, Error: "Nome de unidade systemd inválido.");
         var unit = name.EndsWith(".service", StringComparison.OrdinalIgnoreCase) ? name : $"{name}.service";
         using var process = new Process { StartInfo = new ProcessStartInfo("systemctl") { RedirectStandardOutput=true, RedirectStandardError=true, UseShellExecute=false, CreateNoWindow=true } };
         process.StartInfo.ArgumentList.Add("show");
@@ -114,11 +166,11 @@ public sealed class HostCollector
         process.Start();
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd().Trim();
-        if (!process.WaitForExit(5000)) { process.Kill(true); return new { name=unit, state="timeout", ok=false }; }
+        if (!process.WaitForExit(5000)) { process.Kill(true); return new ServiceStatus(unit, "timeout", false); }
         var states = output.Split(['\r','\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var load = states.ElementAtOrDefault(0) ?? "unknown";
         var active = states.ElementAtOrDefault(1) ?? "unknown";
         var sub = states.ElementAtOrDefault(2) ?? "unknown";
-        return new { name=unit, state=active, sub_state=sub, load_state=load, ok=process.ExitCode==0 && load=="loaded" && active=="active", error=string.IsNullOrWhiteSpace(error)?null:error };
+        return new ServiceStatus(unit, active, process.ExitCode==0 && load=="loaded" && active=="active", sub, load, string.IsNullOrWhiteSpace(error)?null:error);
     }
 }

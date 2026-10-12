@@ -47,7 +47,7 @@ public sealed class AgentWorker : BackgroundService
                 var now=DateTimeOffset.UtcNow;
                 var health=new Dictionary<string,object?> { ["machine"]=Environment.MachineName,["heartbeat_at"]=now,["queue_depth"]=_queue.Files().Count() };
                 if(now>=nextServices){health["services"]=_host.Services(_options.EssentialServices);nextServices=now.AddSeconds(Math.Max(30,_options.ServicesSeconds));}
-                if(now>=nextHost){foreach(var pair in _host.Metrics())health[pair.Key]=pair.Value;nextHost=now.AddSeconds(Math.Max(60,_options.HostMetricsSeconds));}
+                if(now>=nextHost){foreach(var pair in _host.Metrics())health[pair.Key]=pair.Value;var hostSnapshot=_host.Operational(config,_options.EssentialServices);if(hostSnapshot is not null)await _queue.EnqueueAsync(hostSnapshot,stoppingToken);nextHost=now.AddSeconds(Math.Max(60,_options.HostMetricsSeconds));}
                 if(now>=nextSql){health["sql"]=await _sql.HealthAsync(stoppingToken);var snapshot=await _sql.OperationalAsync(config,stoppingToken);if(snapshot is not null)await _queue.EnqueueAsync(snapshot,stoppingToken);nextSql=now.AddSeconds(Math.Max(60,_options.SqlHealthSeconds));}
                 if(now>=nextPerformance){var snapshot=await _sql.PerformanceAsync(config,stoppingToken);if(snapshot is not null)await _queue.EnqueueAsync(snapshot,stoppingToken);nextPerformance=now.AddSeconds(Math.Max(900,_options.SqlPerformanceSeconds));}
 #if CHAVEOU_AGENT
