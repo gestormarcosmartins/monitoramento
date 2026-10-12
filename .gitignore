@@ -5,4 +5,32 @@ __pycache__/
 .ruff_cache/
 .venv/
 data/
+agent/**/bin/
+agent/**/obj/
+agent/dist/
+.secrets/
+*.key
+*.pem
+services/web/test-results/
+services/web/playwright-report/
 
+services/android/*.keystore
+services/android/app/
+node_modules/
+.tools/
+tmp/
+services/web/dist/
+**/build/
+.gradle/
+local.properties
+*.keystore
+*.jks
+services/android-native/.gradle-dist/
+services/android-native/gradle-*-bin.zip
+*.apk
+*.aab
+
+# Artefatos de entrega e configuracao local com segredos
+/dist/
+agent/agent.env
+agent/*.local.env
