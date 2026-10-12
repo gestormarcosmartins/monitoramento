@@ -19,7 +19,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 
 const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  symbol: { width: 52, height: 46, borderRadius: 8 }, symbolSmall: { width: 34, height: 30, borderRadius: 6 },
-  word: { color: 'white', fontSize: 30, letterSpacing: 3, fontWeight: '300' }, wordSmall: { fontSize: 20, letterSpacing: 2 },
+  symbol: { width: 52, height: 46, borderRadius: 8 }, symbolSmall: { width: 44, height: 39, borderRadius: 7 },
+  word: { color: 'white', fontSize: 30, letterSpacing: 3, fontWeight: '300' }, wordSmall: { fontSize: 24, letterSpacing: 2.5 },
   tag: { color: C.onNavyMuted, fontSize: 12, marginTop: -2 },
 });

@@ -3,13 +3,14 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconName } from './icons';
 import { C } from './theme';
 
-export type TabKey = 'home' | 'tickets' | 'new' | 'monitoring' | 'settings';
+export type TabKey = 'home' | 'tickets' | 'new' | 'monitoring' | 'noc' | 'settings';
 export type MonitoringBadge = { count: number; critical?: number; level: 'none' | 'attention' | 'critical' };
 const TABS: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'home', label: 'Início', icon: 'inicio' },
   { key: 'tickets', label: 'Chamados', icon: 'chamados' },
   { key: 'new', label: 'Novo', icon: 'novo' },
   { key: 'monitoring', label: 'Monitoramento', icon: 'monitoramento' },
+  { key: 'noc', label: 'NOC', icon: 'noc' },
   { key: 'settings', label: 'Mais', icon: 'mais' },
 ];
 

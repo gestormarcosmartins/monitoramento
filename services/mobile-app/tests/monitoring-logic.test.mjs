@@ -128,3 +128,41 @@ test('inventario: tipos, ultima coleta e resumos', () => {
   assert.equal(alertBreakdown({ critical: 0, attention: 0, info: 0 }), 'Sem alertas abertos');
   assert.equal(alertBreakdown({ critical: 2, attention: 1, info: 0 }), '2 crítico(s) · 1 de atenção');
 });
+
+import { NOC_FILTERS, filterNoc, nocPath, nocServiceLabel, nocStatusLabel } from '../src/monitoring-logic.ts';
+
+const noc = [
+  { status: 'critical', environment: 'Produção', company: 'Chaveou' },
+  { status: 'attention', environment: 'Homologação', company: 'Chaveou' },
+  { status: 'operational', environment: 'Intranet', company: 'Açaí Ltda' },
+  { status: 'no_communication', environment: 'Filial', company: 'Açaí Ltda' },
+];
+
+test('NOC: caminho respeita o escopo (todas = sem tenant_ids)', () => {
+  assert.equal(nocPath('all'), '/api/v1/dashboard/noc');
+  assert.equal(nocPath(''), '/api/v1/dashboard/noc');
+  assert.equal(nocPath('abc-1'), '/api/v1/dashboard/noc?tenant_ids=abc-1');
+});
+
+test('NOC: filtros por situacao', () => {
+  assert.equal(filterNoc(noc, 'all').length, 4);
+  assert.deepEqual(filterNoc(noc, 'problems').map((i) => i.status), ['critical', 'attention', 'no_communication']);
+  assert.deepEqual(filterNoc(noc, 'critical').map((i) => i.environment), ['Produção']);
+  assert.deepEqual(filterNoc(noc, 'no_communication').map((i) => i.environment), ['Filial']);
+  assert.equal(NOC_FILTERS.length, 4);
+});
+
+test('NOC: busca ignora acentos e caixa, em ambiente e empresa', () => {
+  assert.deepEqual(filterNoc(noc, 'all', 'producao').map((i) => i.environment), ['Produção']);
+  assert.equal(filterNoc(noc, 'all', 'ACAI').length, 2);
+  assert.equal(filterNoc(noc, 'problems', 'acai').length, 1);
+  assert.equal(filterNoc(noc, 'all', 'zzz').length, 0);
+});
+
+test('NOC: rotulos sempre em texto; desconhecido vira sem comunicacao/sem dados', () => {
+  assert.equal(nocStatusLabel('critical').label, 'Crítico');
+  assert.equal(nocStatusLabel('operational').label, 'Operacional');
+  assert.equal(nocStatusLabel('qualquer').label, 'Sem comunicação');
+  assert.equal(nocServiceLabel('failed').label, 'Falha');
+  assert.equal(nocServiceLabel(undefined).label, 'Sem dados');
+});

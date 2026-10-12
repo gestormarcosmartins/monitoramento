@@ -146,3 +146,47 @@ export function alertBreakdown(alerts: { critical: number; attention: number; in
   if (alerts.info) parts.push(`${alerts.info} informativo(s)`);
   return parts.length ? parts.join(' · ') : 'Sem alertas abertos';
 }
+
+// ---- NOC (GET /api/v1/dashboard/noc): um card por ambiente, mesmo conceito do portal ----
+export type NocStatus = 'critical' | 'attention' | 'operational' | 'no_communication';
+export type NocFilter = 'all' | 'problems' | 'critical' | 'no_communication';
+export const NOC_FILTERS: Array<{ key: NocFilter; label: string }> = [
+  { key: 'all', label: 'Todos' },
+  { key: 'problems', label: 'Com problemas' },
+  { key: 'critical', label: 'Críticos' },
+  { key: 'no_communication', label: 'Sem comunicação' },
+];
+
+export function nocPath(scope?: string): string {
+  return scope && scope !== 'all' ? `/api/v1/dashboard/noc?tenant_ids=${encodeURIComponent(scope)}` : '/api/v1/dashboard/noc';
+}
+
+export function nocStatusLabel(status: string | undefined | null): { label: string; color: string } {
+  switch (status) {
+    case 'critical': return { label: 'Crítico', color: STATUS.critical };
+    case 'attention': return { label: 'Atenção', color: STATUS.attention };
+    case 'operational': return { label: 'Operacional', color: STATUS.healthy };
+    default: return { label: 'Sem comunicação', color: '#64748B' };
+  }
+}
+
+export function nocServiceLabel(state: string | undefined | null): { label: string; color: string } {
+  switch (state) {
+    case 'healthy': return { label: 'OK', color: STATUS.healthy };
+    case 'failed': return { label: 'Falha', color: STATUS.critical };
+    case 'inactive': return { label: 'Inativo', color: STATUS.inactive };
+    default: return { label: 'Sem dados', color: '#64748B' };
+  }
+}
+
+const norm = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+export function filterNoc<T extends { status: string; environment: string; company: string }>(items: T[], filter: NocFilter, text = ''): T[] {
+  const query = norm(text.trim());
+  return items.filter((item) => {
+    if (filter === 'problems' && item.status === 'operational') return false;
+    if (filter === 'critical' && item.status !== 'critical') return false;
+    if (filter === 'no_communication' && item.status !== 'no_communication') return false;
+    return !query || norm(item.environment).includes(query) || norm(item.company).includes(query);
+  });
+}
