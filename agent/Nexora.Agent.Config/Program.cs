@@ -47,6 +47,10 @@ internal sealed class ConfigurationForm : Form
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
+    // EnrollmentToken is write-only in the UI (masked, never redisplayed), so when the
+    // field is left blank on a later save — e.g. reopening just to tweak the interval —
+    // we must keep whatever token is already on disk instead of overwriting it with "".
+    private string _existingToken = "";
 
     public ConfigurationForm()
     {
@@ -136,6 +140,7 @@ internal sealed class ConfigurationForm : Form
         {
             using var document = JsonDocument.Parse(File.ReadAllText(SettingsPath));
             var agent = document.RootElement.GetProperty("Agent");
+            _existingToken = String(agent, "EnrollmentToken", "");
             _server.Text = String(agent, "ServerUrl", DefaultServer);
             _name.Text = String(agent, "AgentName", _name.Text);
             _snapshot.Text = String(agent, "SnapshotDirectory", _snapshot.Text);
@@ -226,7 +231,8 @@ internal sealed class ConfigurationForm : Form
             if (!File.Exists(sourceAgent)) throw new FileNotFoundException("Nexora.Agent.exe não foi encontrado ao lado do configurador.");
             var credentialsPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexora", "Agent", "credentials.dat");
-            if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(_token.Text))
+            var enrollmentToken = string.IsNullOrWhiteSpace(_token.Text) ? _existingToken : _token.Text.Trim();
+            if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(enrollmentToken))
                 throw new InvalidOperationException("Informe o token de ativação no primeiro cadastro deste computador.");
             Directory.CreateDirectory(InstallDirectory);
             StopAndDeleteService();
@@ -235,7 +241,7 @@ internal sealed class ConfigurationForm : Form
             {
                 Agent = new
                 {
-                    ServerUrl = server.ToString().TrimEnd('/'), TenantId = "", EnrollmentToken = _token.Text.Trim(),
+                    ServerUrl = server.ToString().TrimEnd('/'), TenantId = "", EnrollmentToken = enrollmentToken,
                     AgentName = _name.Text.Trim(), SnapshotDirectory = _snapshot.Text.Trim(),
                     DataDirectory = @"C:\ProgramData\Nexora\Agent", PollSeconds = (int)_sendSeconds.Value,
                     HeartbeatSeconds = (int)_sendSeconds.Value, ServicesSeconds=(int)_servicesSeconds.Value, HostMetricsSeconds=(int)_hostSeconds.Value,
