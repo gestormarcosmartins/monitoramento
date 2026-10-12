@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
 
     central_database_url: str = Field(alias="CENTRAL_DATABASE_URL")
+    database_pool_min_size: int = Field(default=2, ge=1, alias="DATABASE_POOL_MIN_SIZE")
+    database_pool_max_size: int = Field(default=12, ge=1, alias="DATABASE_POOL_MAX_SIZE")
+    database_pool_timeout_seconds: float = Field(default=5, gt=0, alias="DATABASE_POOL_TIMEOUT_SECONDS")
     redis_url: str = Field(alias="REDIS_URL")
     central_secret_key: str = Field(min_length=32, alias="CENTRAL_SECRET_KEY")
     zabbix_api_url: str = Field(alias="ZABBIX_API_URL")
@@ -33,6 +36,9 @@ class Settings(BaseSettings):
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
     monitor_interval_seconds: int = Field(default=30, ge=10, alias="MONITOR_INTERVAL_SECONDS")
     action_execution_enabled: bool = Field(default=False, alias="ACTION_EXECUTION_ENABLED")
+    vapid_public_key: str = Field(default="", alias="VAPID_PUBLIC_KEY")
+    vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
+    vapid_subject: str = Field(default="mailto:noreply@nexora.local", alias="VAPID_SUBJECT")
     benner_ingest_token: str = Field(default="", alias="BENNER_INGEST_TOKEN")
 
 

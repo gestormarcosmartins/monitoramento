@@ -3,6 +3,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, Field, model_validator
+from .security import validate_outbound_url
 
 
 class TenantCreate(BaseModel):
@@ -47,6 +48,7 @@ class MonitorCreate(BaseModel):
             if not url:
                 raise ValueError("http monitor requires configuration.url")
             AnyHttpUrl(url)
+            validate_outbound_url(url)
         elif self.monitor_type == "tcp":
             if not self.configuration.get("host"):
                 raise ValueError("tcp monitor requires configuration.host")
@@ -84,6 +86,7 @@ class IncidentUpdate(BaseModel):
     assignee_team_id: UUID | None = None
     supplier_id: UUID | None = None
     supplier_protocol: str | None = Field(default=None, max_length=200)
+    sla_policy_id: UUID | None = None
 
 
 class AlertUpdate(BaseModel):

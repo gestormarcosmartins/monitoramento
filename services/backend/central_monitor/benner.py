@@ -49,7 +49,7 @@ def ingest_snapshot(
     target = payload.get("target") or {}
     server = str(target.get("server") or "SQL Server")
     database = str(target.get("database") or "master")
-    asset_name = f"Benner SQL - {server}"
+    asset_name = f"Banco de Dados - {server} - {database}"
     monitors: list[tuple[dict[str, Any], bool, str]] = []
     try:
         with tenant_connection(tenant_id) as connection:
@@ -76,7 +76,7 @@ def ingest_snapshot(
                 number, name, category, state, message = _check_data(item)
                 if number <= 0:
                     continue
-                monitor_name = f"Benner SQL {number:02d} - {name}"
+                monitor_name = f"Banco de Dados {number:02d} - {name}"
                 severity = {"error": "high", "critical": "disaster", "warning": "warning", "attention": "warning"}.get(state, "info")
                 monitor = connection.execute(
                     """INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,interval_seconds,severity)
@@ -139,3 +139,52 @@ def snapshot_history(
             """SELECT id,execution_id,collected_at,finished_at,duration_ms,target,summary,backup,received_at
             FROM cm_benner_snapshots WHERE tenant_id=%s ORDER BY collected_at DESC LIMIT %s""", (tenant_id, limit)
         ).fetchall())
+
+
+@router.get("/database-monitoring/databases", tags=["database-monitoring"])
+def monitored_databases(
+    tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)
+) -> list[dict[str, Any]]:
+    from .main import authorize_tenant
+    authorize_tenant(identity, tenant_id)
+    with tenant_connection(tenant_id) as connection:
+        return list(connection.execute(
+            """SELECT DISTINCT ON (s.asset_id)
+                s.asset_id, a.name AS asset_name, a.address AS server,
+                COALESCE(s.target->>'database', a.metadata->>'database', 'Banco principal') AS database_name,
+                s.collected_at AS last_collected_at, s.summary
+            FROM cm_benner_snapshots s
+            JOIN cm_assets a ON a.tenant_id=s.tenant_id AND a.id=s.asset_id
+            WHERE s.tenant_id=%s
+            ORDER BY s.asset_id, s.collected_at DESC""",
+            (tenant_id,),
+        ).fetchall())
+
+
+@router.get("/database-monitoring/latest", tags=["database-monitoring"])
+def latest_database_snapshot(
+    asset_id: str = Query(...), tenant_id: str = Depends(tenant_header),
+    identity: Identity = Depends(current_identity),
+) -> dict[str, Any]:
+    from .main import authorize_tenant
+    authorize_tenant(identity, tenant_id)
+    with tenant_connection(tenant_id) as connection:
+        snapshot = connection.execute(
+            """SELECT * FROM cm_benner_snapshots
+            WHERE tenant_id=%s AND asset_id=%s ORDER BY collected_at DESC LIMIT 1""",
+            (tenant_id, asset_id),
+        ).fetchone()
+        if not snapshot:
+            return {"snapshot": None, "checks": [], "history": []}
+        checks = list(connection.execute(
+            """SELECT * FROM cm_benner_checks
+            WHERE tenant_id=%s AND snapshot_id=%s ORDER BY check_number""",
+            (tenant_id, snapshot["id"]),
+        ).fetchall())
+        history = list(connection.execute(
+            """SELECT id,execution_id,collected_at,finished_at,duration_ms,target,summary,received_at
+            FROM cm_benner_snapshots WHERE tenant_id=%s AND asset_id=%s
+            ORDER BY collected_at DESC LIMIT 50""",
+            (tenant_id, asset_id),
+        ).fetchall())
+        return {"snapshot": snapshot, "checks": checks, "history": history}

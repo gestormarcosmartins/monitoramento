@@ -54,13 +54,27 @@ class GlpiClient:
         return int(result["id"])
 
     def update_ticket_status(self, ticket_id: int, status: str) -> None:
-        glpi_status = {"new": 1, "acknowledged": 2, "in_progress": 2, "waiting_customer": 4,
-                       "waiting_supplier": 4, "resolved": 5, "closed": 6, "ignored": 6}[status]
+        glpi_status = {"new": 1, "triaged": 1, "assigned": 2, "acknowledged": 2, "in_progress": 2,
+                       "waiting_customer": 4, "waiting_supplier": 4, "resolved": 5, "closed": 6,
+                       "cancelled": 6, "duplicate": 6, "ignored": 6}[status]
         self._request("PUT", f"Ticket/{ticket_id}", {"input": {"id": ticket_id, "status": glpi_status}})
 
     def add_followup(self, ticket_id: int, body: str, private: bool = False) -> int:
         result = self._request("POST", "ITILFollowup", {"input": {"itemtype": "Ticket", "items_id": ticket_id, "content": body, "is_private": int(private)}})
         return int(result["id"])
+
+    def add_task(self, ticket_id: int, body: str, minutes: int) -> int:
+        result = self._request("POST", "TicketTask", {"input": {
+            "itemtype": "Ticket", "items_id": ticket_id, "content": body,
+            "actiontime": minutes * 60, "state": 2,
+        }})
+        return int(result["id"])
+
+    def get_ticket(self, ticket_id: int) -> dict[str, Any]:
+        result = self._request("GET", f"Ticket/{ticket_id}")
+        if not isinstance(result, dict):
+            raise RuntimeError("GLPI returned an invalid ticket payload")
+        return result
 
     def status(self) -> dict[str, Any]:
         token = self._session()
@@ -68,6 +82,53 @@ class GlpiClient:
         try:
             response = httpx.get(f"{self.url}/getFullSession", headers=headers, timeout=10)
             response.raise_for_status()
-            return {"status": "up"}
+            session = response.json()
+            return {"status": "up", "version": self._version_from_session(session)}
+        finally:
+            httpx.get(f"{self.url}/killSession", headers=headers, timeout=10)
+
+    @staticmethod
+    def _version_from_session(session: dict[str, Any]) -> str | None:
+        values = session.get("session", session)
+        for key in ("glpi_version", "version", "GLPI_VERSION"):
+            if values.get(key):
+                return str(values[key])
+        return None
+
+    def capabilities(self) -> dict[str, Any]:
+        """Discover the GLPI features used by Nexora without assuming a plugin set."""
+        token = self._session()
+        headers = {**self._base_headers(), "Session-Token": token}
+        manifest: dict[str, Any] = {
+            "integration": "glpi",
+            "auth_mode": "user_token" if self.user_token else "basic",
+            "resources": {},
+            "plugins": [],
+        }
+        try:
+            session_response = httpx.get(f"{self.url}/getFullSession", headers=headers, timeout=10)
+            session_response.raise_for_status()
+            manifest["version"] = self._version_from_session(session_response.json())
+            for resource in ("Ticket", "ITILFollowup", "User", "Entity", "SLA"):
+                response = httpx.get(f"{self.url}/listSearchOptions/{resource}", headers=headers, timeout=10)
+                manifest["resources"][resource] = {
+                    "available": response.status_code < 400,
+                    "status_code": response.status_code,
+                }
+            plugin_response = httpx.get(f"{self.url}/Plugin", headers=headers, timeout=10)
+            if plugin_response.status_code < 400:
+                plugins = plugin_response.json()
+                if isinstance(plugins, list):
+                    manifest["plugins"] = [
+                        {"id": item.get("id"), "name": item.get("name"), "state": item.get("state")}
+                        for item in plugins
+                    ]
+            manifest["supports"] = {
+                "tickets": manifest["resources"]["Ticket"]["available"],
+                "followups": manifest["resources"]["ITILFollowup"]["available"],
+                "entities": manifest["resources"]["Entity"]["available"],
+                "sla": manifest["resources"]["SLA"]["available"],
+            }
+            return manifest
         finally:
             httpx.get(f"{self.url}/killSession", headers=headers, timeout=10)

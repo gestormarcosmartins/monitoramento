@@ -72,7 +72,15 @@ def send_email(tenant_id: str, target: str, subject: str, body: str) -> None:
         smtp.send_message(message)
 
 
-def send_whatsapp(tenant_id: str, target: str, body: str) -> None:
+def send_whatsapp(tenant_id: str, target: str, body: str, *, require_homologation: bool = True) -> None:
+    if require_homologation:
+        from .monitoring import channel_ready
+        with tenant_connection(tenant_id) as connection:
+            capability = connection.execute(
+                "SELECT * FROM cm_channel_capabilities WHERE tenant_id=%s AND channel='whatsapp'", (tenant_id,)
+            ).fetchone()
+        if not channel_ready(capability, "whatsapp"):
+            raise RuntimeError("WhatsApp bloqueado: homologue provedor, identidade, consentimento, template e capacidade antes do envio")
     config = get_notification_settings(tenant_id, include_secrets=True)
     if not config["evolution_enabled"] or not config["evolution_api_url"] or not config["evolution_instance"]:
         raise RuntimeError("Evolution API não está habilitada ou configurada")
@@ -93,6 +101,49 @@ def send_whatsapp(tenant_id: str, target: str, body: str) -> None:
     response.raise_for_status()
 
 
+def get_whatsapp_connection(tenant_id: str, request_qr: bool = False) -> dict[str, Any]:
+    """Return a sanitized Evolution connection state and, optionally, its QR code."""
+    config = get_notification_settings(tenant_id, include_secrets=True)
+    base_url = (config.get("evolution_api_url") or "").rstrip("/")
+    instance = config.get("evolution_instance") or ""
+    api_key = config.get("evolution_api_key") or ""
+    if not base_url or not instance:
+        raise RuntimeError("Configure e salve a URL e a instância da Evolution API antes de gerar o QR Code")
+    if not api_key:
+        raise RuntimeError("Configure e salve a API Key da Evolution antes de gerar o QR Code")
+    headers = {"apikey": api_key}
+    status_response = httpx.get(
+        f"{base_url}/instance/connectionState/{instance}", headers=headers, timeout=20
+    )
+    if status_response.status_code == 404:
+        raise RuntimeError("A instância informada não foi encontrada na Evolution API")
+    status_response.raise_for_status()
+    status_data = status_response.json()
+    state = (
+        status_data.get("state")
+        or (status_data.get("instance") or {}).get("state")
+        or (status_data.get("instance") or {}).get("status")
+        or "unknown"
+    )
+    result: dict[str, Any] = {"state": str(state).lower(), "connected": str(state).lower() == "open"}
+    if not request_qr or result["connected"]:
+        return result
+    qr_response = httpx.get(f"{base_url}/instance/connect/{instance}", headers=headers, timeout=30)
+    if qr_response.status_code == 404:
+        raise RuntimeError("A instância informada não foi encontrada na Evolution API")
+    qr_response.raise_for_status()
+    qr_data = qr_response.json()
+    nested = qr_data.get("qrcode") if isinstance(qr_data.get("qrcode"), dict) else {}
+    qr_base64 = qr_data.get("base64") or nested.get("base64")
+    pairing_code = qr_data.get("pairingCode") or qr_data.get("pairing_code") or nested.get("pairingCode")
+    if qr_base64 and not str(qr_base64).startswith("data:image/"):
+        qr_base64 = f"data:image/png;base64,{qr_base64}"
+    result.update({"qr_code": qr_base64, "pairing_code": pairing_code})
+    if not qr_base64 and not pairing_code:
+        raise RuntimeError("A Evolution não retornou um QR Code. Tente atualizar novamente em alguns segundos")
+    return result
+
+
 def _send_webhook(target: str, payload: dict[str, Any]) -> None:
     if not target.startswith(("https://", "http://")): raise RuntimeError("Webhook target must be HTTP or HTTPS")
     response = httpx.post(target, json=payload, timeout=15)
@@ -104,6 +155,8 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
         incident = connection.execute("SELECT id,title,status,priority,created_at FROM cm_incidents WHERE tenant_id=%s AND id=%s", (tenant_id,incident_id)).fetchone()
         if not incident: return
         rules = list(connection.execute("SELECT * FROM cm_notification_rules WHERE tenant_id=%s AND active AND %s=ANY(events)", (tenant_id,event)).fetchall())
+    from .push import deliver_push
+    deliver_push(tenant_id, incident_id, event, incident)
     failures = []
     try:
         _deliver_responsible_contacts(tenant_id, incident_id, event, incident)
@@ -115,6 +168,8 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
             delivery = connection.execute("""INSERT INTO cm_notification_deliveries(tenant_id,rule_id,incident_id,event,channel,target,status)
                 VALUES (%s,%s,%s,%s,%s,%s,'pending') ON CONFLICT(rule_id,incident_id,event) DO UPDATE
                 SET attempts=cm_notification_deliveries.attempts+1 RETURNING *""", (tenant_id,rule["id"],incident_id,event,rule["channel"],rule["target"])).fetchone()
+        if delivery["status"] == "sent":
+            continue
         payload = {"event":event,"incident_id":incident_id,"title":incident["title"],"status":incident["status"],"priority":incident["priority"]}
         message = f"Nexora: {incident['title']}\nEvento: {event}\nPrioridade: {incident['priority']}\nEstado: {incident['status']}"
         try:

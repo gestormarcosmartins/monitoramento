@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import signal
 import socket
 import time
@@ -14,6 +15,7 @@ from .glpi import GlpiClient
 from .notifications import deliver_notifications
 from .settings import get_settings
 from .sla import add_sla_minutes
+from .obligations import create_ticket_obligations, escalation_level
 from .zabbix import ZabbixClient
 
 logger = logging.getLogger("central-monitor-worker")
@@ -31,7 +33,7 @@ def check_http(configuration: dict[str, Any]) -> tuple[bool, str]:
     timeout = min(float(configuration.get("timeout_seconds", 10)), 30)
     started = time.monotonic()
     try:
-        response = httpx.get(url, timeout=timeout, follow_redirects=True)
+        response = httpx.get(url, timeout=timeout, follow_redirects=False)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         ok = response.status_code in expected
         return ok, f"HTTP {response.status_code} in {elapsed_ms} ms"
@@ -129,6 +131,7 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                     WHERE tenant_id=%s AND id=%s""",
                     (priority,message,response_due,resolution_due,tenant_id,incident["id"]),
                 )
+                create_ticket_obligations(connection,tenant_id,str(incident["id"]),priority,response_due,resolution_due)
                 connection.execute(
                     "INSERT INTO cm_incident_history(tenant_id,incident_id,event_type,details) VALUES (%s,%s,'incident.created',%s)",
                     (tenant_id,incident["id"],Jsonb({"source":"monitoring","priority":priority})),
@@ -207,8 +210,9 @@ def run_monitors() -> None:
 def sync_incident(tenant_id: str, incident_id: str) -> None:
     with tenant_connection(tenant_id) as connection:
         incident = connection.execute(
-            """SELECT i.*,a.severity,a.message,t.name AS tenant_name
-            FROM cm_incidents i JOIN cm_alerts a ON a.id=i.alert_id
+            """SELECT i.*,COALESCE(a.severity,CASE i.priority WHEN 'critical' THEN 'disaster' WHEN 'high' THEN 'high' WHEN 'medium' THEN 'average' ELSE 'warning' END) AS severity,
+            COALESCE(a.message,i.description) AS message,t.name AS tenant_name
+            FROM cm_incidents i LEFT JOIN cm_alerts a ON a.id=i.alert_id
             JOIN cm_tenants t ON t.id=i.tenant_id
             WHERE i.tenant_id=%s AND i.id=%s""",
             (tenant_id, incident_id),
@@ -237,6 +241,54 @@ def sync_incident_comment(tenant_id: str, incident_id: str, comment_id: str) -> 
         ).fetchone()
     if row and row["glpi_ticket_id"]:
         GlpiClient().add_followup(int(row["glpi_ticket_id"]),row["body"],row["is_internal"])
+
+
+GLPI_TO_NEXORA_STATUS={1:"new",2:"in_progress",3:"in_progress",4:"waiting_customer",5:"resolved",6:"closed"}
+
+
+def reconcile_glpi_tickets() -> None:
+    """Refresh GLPI-owned ticket state without overwriting pending local commands."""
+    with connect() as connection:
+        tenant_ids=[str(row["id"]) for row in connection.execute("SELECT id FROM cm_tenants WHERE active")]
+    client=GlpiClient()
+    for tenant_id in tenant_ids:
+        with tenant_connection(tenant_id) as connection:
+            tickets=list(connection.execute("""SELECT id,glpi_ticket_id,status FROM cm_incidents
+                WHERE tenant_id=%s AND glpi_ticket_id IS NOT NULL AND sync_status='synced'
+                  AND inactive_at IS NULL ORDER BY synced_at NULLS FIRST LIMIT 100""",(tenant_id,)).fetchall())
+        for ticket in tickets:
+            try:
+                remote=client.get_ticket(int(ticket["glpi_ticket_id"]))
+                remote_status=GLPI_TO_NEXORA_STATUS.get(int(remote.get("status",0)))
+                if not remote_status or remote_status==ticket["status"]:
+                    continue
+                with tenant_connection(tenant_id) as connection:
+                    connection.execute("""UPDATE cm_incidents SET status=%s,updated_at=now(),
+                        resolved_at=CASE WHEN %s='resolved' THEN COALESCE(resolved_at,now()) ELSE resolved_at END,
+                        closed_at=CASE WHEN %s='closed' THEN COALESCE(closed_at,now()) ELSE closed_at END
+                        WHERE tenant_id=%s AND id=%s AND sync_status='synced'""",
+                        (remote_status,remote_status,remote_status,tenant_id,ticket["id"]))
+                    connection.execute("""INSERT INTO cm_incident_history(tenant_id,incident_id,event_type,details)
+                        VALUES (%s,%s,'glpi.status_reconciled',%s)""",
+                        (tenant_id,ticket["id"],Jsonb({"from":ticket["status"],"to":remote_status,"glpi_ticket_id":ticket["glpi_ticket_id"]})))
+            except Exception:
+                logger.exception("glpi_ticket_reconciliation_failed",extra={"tenant_id":tenant_id,"incident_id":str(ticket["id"]),"glpi_ticket_id":ticket["glpi_ticket_id"]})
+
+
+def sync_time_entry(tenant_id:str,entry_id:str)->None:
+    with tenant_connection(tenant_id) as connection:
+        row=connection.execute("""SELECT te.*,i.glpi_ticket_id FROM cm_time_entries te JOIN cm_incidents i ON i.id=te.ticket_id
+            WHERE te.tenant_id=%s AND te.id=%s AND te.state='pending_glpi'""",(tenant_id,entry_id)).fetchone()
+    if not row: return
+    if not row["glpi_ticket_id"]: raise RuntimeError("Ticket is not confirmed by GLPI yet")
+    try:
+        glpi_task_id=GlpiClient().add_task(int(row["glpi_ticket_id"]),row["description"],row["minutes"])
+    except Exception as error:
+        with tenant_connection(tenant_id) as connection:
+            connection.execute("UPDATE cm_time_entries SET state='rejected',rejection_reason=%s,updated_at=now() WHERE tenant_id=%s AND id=%s",(str(error)[:1000],tenant_id,entry_id))
+        raise
+    with tenant_connection(tenant_id) as connection:
+        connection.execute("UPDATE cm_time_entries SET state='confirmed',glpi_task_id=%s,rejection_reason=NULL,updated_at=now() WHERE tenant_id=%s AND id=%s",(glpi_task_id,tenant_id,entry_id))
 
 
 def provision_zabbix_monitor(tenant_id: str, monitor_id: str) -> None:
@@ -272,16 +324,110 @@ def execute_approved_action(tenant_id: str, execution_id: str) -> None:
         connection.execute("INSERT INTO cm_audit_log(tenant_id,action,object_type,object_id,details) VALUES (%s,'action.finished','action_execution',%s,%s)",(tenant_id,execution_id,Jsonb({"status":final_status})))
 
 
+def runbook_authorization_failure(requester_authorized:bool,approver_required:bool,approver_authorized:bool)->str|None:
+    if not requester_authorized:return "requester_access_revoked"
+    if approver_required and not approver_authorized:return "approver_access_revoked"
+    return None
+
+
+def execute_runbook(tenant_id:str,execution_id:str)->None:
+    with tenant_connection(tenant_id) as connection:
+        execution=connection.execute("""SELECT e.*,v.steps,v.postconditions,v.lock_key,v.approval_required,v.risk,r.name,
+          EXISTS(SELECT 1 FROM cm_users u WHERE u.id=e.requested_by AND u.active AND (u.is_master OR EXISTS(
+            SELECT 1 FROM cm_access_grants g WHERE g.tenant_id=e.tenant_id AND g.user_id=u.id AND g.active
+              AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now()) AND g.role IN ('admin','manager','operator')
+          ))) AS requester_authorized,
+          EXISTS(SELECT 1 FROM cm_users u WHERE u.id=e.approved_by AND u.active AND (u.is_master OR EXISTS(
+            SELECT 1 FROM cm_access_grants g WHERE g.tenant_id=e.tenant_id AND g.user_id=u.id AND g.active
+              AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now()) AND g.role IN ('admin','manager')
+          ))) AS approver_authorized
+          FROM cm_runbook_executions e
+          JOIN cm_runbook_versions v ON v.tenant_id=e.tenant_id AND v.runbook_id=e.runbook_id AND v.version=e.version
+          JOIN cm_runbooks r ON r.tenant_id=e.tenant_id AND r.id=e.runbook_id
+          WHERE e.tenant_id=%s AND e.id=%s FOR UPDATE""",(tenant_id,execution_id)).fetchone()
+        if not execution or execution["status"]!="approved":return
+        approval_required=execution["approval_required"] or execution["risk"] in ("high","critical")
+        authorization_failure=runbook_authorization_failure(execution["requester_authorized"],approval_required,execution["approver_authorized"])
+        if authorization_failure:
+            connection.execute("UPDATE cm_runbook_executions SET status='rejected',result=%s,finished_at=now() WHERE tenant_id=%s AND id=%s",(Jsonb({"reason":authorization_failure}),tenant_id,execution_id))
+            connection.execute("INSERT INTO cm_audit_log(tenant_id,action,object_type,object_id,details) VALUES (%s,'runbook.authorization_rejected','runbook_execution',%s,%s)",(tenant_id,execution_id,Jsonb({"reason":authorization_failure})))
+            return
+        locked=connection.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS locked",(execution["lock_key"],)).fetchone()["locked"]
+        if not locked:raise RuntimeError("Runbook target is locked by another execution")
+        connection.execute("UPDATE cm_runbook_executions SET status='running',started_at=now() WHERE tenant_id=%s AND id=%s",(tenant_id,execution_id))
+        results=[];final_status="succeeded"
+        try:
+            for step in execution["steps"]:
+                kind=step["type"]
+                if kind=="collect_diagnostics":
+                    rows=list(connection.execute("SELECT name,last_status,last_message,last_checked_at FROM cm_monitors WHERE tenant_id=%s AND (%s::uuid IS NULL OR asset_id=%s::uuid)",(tenant_id,execution["target_asset_id"],execution["target_asset_id"])).fetchall())
+                    results.append({"type":kind,"monitors":rows})
+                elif kind=="wait":
+                    seconds=min(max(float(step.get("seconds",1)),0),5);time.sleep(seconds);results.append({"type":kind,"seconds":seconds})
+                elif kind in ("verify_monitor","http_request"):
+                    monitor=connection.execute("SELECT * FROM cm_monitors WHERE tenant_id=%s AND id=%s",(tenant_id,step.get("monitor_id"))).fetchone()
+                    if not monitor:raise RuntimeError("Referenced monitor was not found")
+                    if kind=="http_request":
+                        if monitor["monitor_type"]!="http":raise RuntimeError("Referenced monitor is not HTTP")
+                        ok,message=check_http(monitor["configuration"])
+                    else:ok,message=monitor["last_status"]=="up",monitor["last_message"]
+                    results.append({"type":kind,"ok":ok,"message":message})
+                    if not ok:raise RuntimeError("Runbook verification did not prove recovery")
+                elif kind=="restart_service":
+                    results.append({"type":kind,"message":"Remote adapter acknowledgement cannot prove recovery"});final_status="uncertain";break
+            if final_status=="succeeded":
+                for condition in execution["postconditions"]:
+                    if condition.get("type")=="verify_monitor":
+                        monitor=connection.execute("SELECT last_status FROM cm_monitors WHERE tenant_id=%s AND id=%s",(tenant_id,condition.get("monitor_id"))).fetchone()
+                        if not monitor or monitor["last_status"]!="up":final_status="uncertain";results.append({"postcondition":condition,"ok":False})
+        except (httpx.TimeoutException,TimeoutError) as error:
+            final_status="uncertain";results.append({"error":str(error),"reason":"timeout_requires_reconciliation"})
+        except Exception as error:
+            final_status="failed";results.append({"error":str(error)})
+        connection.execute("UPDATE cm_runbook_executions SET status=%s,result=%s,finished_at=now() WHERE tenant_id=%s AND id=%s",(final_status,Jsonb({"steps":results}),tenant_id,execution_id))
+        connection.execute("INSERT INTO cm_audit_log(tenant_id,action,object_type,object_id,details) VALUES (%s,'runbook.finished','runbook_execution',%s,%s)",(tenant_id,execution_id,Jsonb({"status":final_status,"runbook":execution["name"]})))
+
+
+def retry_delay_seconds(attempts: int) -> int:
+    return min(900, 2 ** min(max(attempts, 1), 9))
+
+
+def outbox_actor_authorized(connection:Any,tenant_id:str,requested_by:Any)->bool:
+    if requested_by is None:return True
+    return bool(connection.execute("""SELECT 1 FROM cm_users u WHERE u.id=%s AND u.active AND (u.is_master OR EXISTS(
+        SELECT 1 FROM cm_access_grants g WHERE g.tenant_id=%s AND g.user_id=u.id AND g.active
+          AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())))""",(requested_by,tenant_id)).fetchone())
+
+
 def process_outbox() -> None:
+    worker_id=f"worker-{os.getpid()}"
     with connect() as connection:
-        rows = list(
-            connection.execute(
-                """SELECT id,tenant_id,topic,payload,attempts FROM cm_outbox WHERE processed_at IS NULL
-                AND attempts < 10
-                ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 100"""
-            ).fetchall()
-        )
+        tenant_ids=[str(row["id"]) for row in connection.execute("SELECT id FROM cm_tenants WHERE active ORDER BY id").fetchall()]
+    rows=[]
+    for tenant_id in tenant_ids:
+        with tenant_connection(tenant_id) as connection:
+            rows.extend(connection.execute(
+                """WITH candidates AS (
+                    SELECT id FROM cm_outbox
+                    WHERE tenant_id=%s AND processed_at IS NULL AND attempts < 10 AND available_at<=now()
+                      AND (state IN ('pending','retry_wait') OR (state='running' AND locked_at<now()-interval '10 minutes'))
+                    ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 25
+                )
+                UPDATE cm_outbox o SET state='running',locked_at=now(),worker_id=%s,state_reason=NULL
+                FROM candidates c WHERE o.id=c.id
+                RETURNING o.id,o.tenant_id,o.topic,o.payload,o.attempts,o.requested_by""",
+                (tenant_id,worker_id),
+            ).fetchall())
     for row in rows:
+        attempt_number=row["attempts"]+1
+        with tenant_connection(str(row["tenant_id"])) as connection:
+            connection.execute("INSERT INTO cm_outbox_attempts(tenant_id,outbox_id,attempt,worker_id) VALUES (%s,%s,%s,%s) ON CONFLICT(outbox_id,attempt) DO NOTHING",(row["tenant_id"],row["id"],attempt_number,worker_id))
+            if not outbox_actor_authorized(connection,str(row["tenant_id"]),row["requested_by"]):
+                logger.warning("outbox_authorization_rejected",extra={"tenant_id":str(row["tenant_id"]),"outbox_id":row["id"],"topic":row["topic"],"requested_by":str(row["requested_by"])})
+                connection.execute("UPDATE cm_outbox SET state='rejected',processed_at=now(),state_reason='requester_access_revoked',last_error='Authorization was revoked before execution',locked_at=NULL,worker_id=NULL WHERE id=%s",(row["id"],))
+                connection.execute("UPDATE cm_outbox_attempts SET outcome='rejected',error='requester_access_revoked',finished_at=now() WHERE outbox_id=%s AND attempt=%s",(row["id"],attempt_number))
+                connection.execute("INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id,details) VALUES (%s,%s,'outbox.authorization_rejected','outbox',%s,%s)",(row["tenant_id"],row["requested_by"],str(row["id"]),Jsonb({"topic":row["topic"]})))
+                continue
         try:
             if row["topic"] in ("incident.created", "incident.status_changed"):
                 sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
@@ -293,16 +439,27 @@ def process_outbox() -> None:
                 provision_zabbix_monitor(str(row["tenant_id"]),row["payload"]["monitor_id"])
             elif row["topic"] == "action.validated":
                 execute_approved_action(str(row["tenant_id"]),row["payload"]["execution_id"])
+            elif row["topic"] == "time_entry.requested":
+                sync_time_entry(str(row["tenant_id"]),row["payload"]["entry_id"])
+            elif row["topic"] == "runbook.approved":
+                execute_runbook(str(row["tenant_id"]),row["payload"]["execution_id"])
             logger.info("outbox_event", extra={"topic": row["topic"], "outbox_id": row["id"]})
-            with connect() as connection:
-                connection.execute("UPDATE cm_outbox SET processed_at=now(),last_error=NULL WHERE id=%s", (row["id"],))
+            with tenant_connection(str(row["tenant_id"])) as connection:
+                connection.execute("UPDATE cm_outbox SET state='succeeded',processed_at=now(),last_error=NULL,locked_at=NULL,worker_id=NULL WHERE id=%s", (row["id"],))
+                connection.execute("UPDATE cm_outbox_attempts SET outcome='succeeded',finished_at=now() WHERE outbox_id=%s AND attempt=%s",(row["id"],attempt_number))
         except Exception as error:
             logger.exception("outbox_event_failed", extra={"topic": row["topic"], "outbox_id": row["id"]})
-            with connect() as connection:
+            with tenant_connection(str(row["tenant_id"])) as connection:
+                next_attempt=row["attempts"]+1
+                next_state="uncertain" if next_attempt>=10 else "retry_wait"
+                if next_state=="uncertain":
+                    logger.error("outbox_effect_uncertain",extra={"tenant_id":str(row["tenant_id"]),"outbox_id":row["id"],"topic":row["topic"],"attempts":next_attempt,"reconciliation_required":True})
                 connection.execute(
-                    "UPDATE cm_outbox SET attempts=attempts+1,last_error=%s WHERE id=%s",
-                    (str(error)[:1000], row["id"]),
+                    """UPDATE cm_outbox SET attempts=%s,last_error=%s,state=%s,
+                    state_reason=%s,available_at=now()+(%s * interval '1 second'),locked_at=NULL,worker_id=NULL WHERE id=%s""",
+                    (next_attempt,str(error)[:1000],next_state,"attempts_exhausted_effect_requires_reconciliation" if next_state=="uncertain" else "transient_failure",retry_delay_seconds(next_attempt),row["id"]),
                 )
+                connection.execute("UPDATE cm_outbox_attempts SET outcome=%s,error=%s,finished_at=now() WHERE outbox_id=%s AND attempt=%s",(next_state,str(error)[:1000],row["id"],attempt_number))
             if row["topic"].startswith("incident.") and row["tenant_id"] and row["payload"].get("incident_id"):
                 with tenant_connection(str(row["tenant_id"])) as connection:
                     connection.execute(
@@ -310,6 +467,30 @@ def process_outbox() -> None:
                         WHERE tenant_id=%s AND id=%s""",
                         (str(error)[:1000], row["tenant_id"], row["payload"]["incident_id"]),
                     )
+
+
+def process_obligation_escalations() -> None:
+    with connect() as connection:
+        tenant_ids=[str(row["id"]) for row in connection.execute("SELECT id FROM cm_tenants WHERE active")]
+    now=datetime.now(UTC)
+    for tenant_id in tenant_ids:
+        with tenant_connection(tenant_id) as connection:
+            obligations=list(connection.execute("""SELECT o.*,i.title FROM cm_ticket_obligations o JOIN cm_incidents i ON i.id=o.ticket_id
+                WHERE o.tenant_id=%s AND o.state='running' AND o.due_at<=now()+interval '1 hour'
+                  AND i.status NOT IN ('resolved','closed','cancelled','duplicate','ignored')""",(tenant_id,)).fetchall())
+            for obligation in obligations:
+                level=escalation_level(obligation["due_at"],now)
+                if not level: continue
+                reason=f"{obligation['kind']} {'vencida' if level==3 else 'em risco'}"
+                event=connection.execute("""INSERT INTO cm_escalation_events(tenant_id,ticket_id,obligation_id,level,reason)
+                    VALUES (%s,%s,%s,%s,%s) ON CONFLICT(tenant_id,obligation_id,level) DO NOTHING RETURNING id""",
+                    (tenant_id,obligation["ticket_id"],obligation["id"],level,reason)).fetchone()
+                if level==3:
+                    connection.execute("UPDATE cm_ticket_obligations SET state='breached',updated_at=now() WHERE tenant_id=%s AND id=%s",(tenant_id,obligation["id"]))
+                if event:
+                    connection.execute("""INSERT INTO cm_outbox(tenant_id,topic,payload,idempotency_key)
+                        VALUES (%s,'notification.requested',%s,%s) ON CONFLICT(tenant_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING""",
+                        (tenant_id,Jsonb({"incident_id":str(obligation["ticket_id"]),"event":f"sla.{obligation['kind']}.level_{level}"}),f"sla:{obligation['id']}:{level}"))
 
 
 def main() -> None:
@@ -321,6 +502,8 @@ def main() -> None:
     logger.info("worker_started")
     while running:
         process_outbox()
+        reconcile_glpi_tickets()
+        process_obligation_escalations()
         run_monitors()
         time.sleep(settings.monitor_interval_seconds)
     logger.info("worker_stopped")
