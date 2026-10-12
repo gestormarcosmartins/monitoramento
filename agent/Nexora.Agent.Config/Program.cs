@@ -34,7 +34,7 @@ internal sealed class ConfigurationForm : Form
     private readonly NumericUpDown _hostSeconds = new() { Minimum = 60, Maximum = 86400, Value = 300 };
     private readonly NumericUpDown _sqlHealthSeconds = new() { Minimum = 60, Maximum = 86400, Value = 600 };
     private readonly NumericUpDown _sqlPerformanceSeconds = new() { Minimum = 900, Maximum = 604800, Value = 21600 };
-    private readonly TextBox _services = new() { Text = "MSSQLSERVER, SQLSERVERAGENT, NexoraAgent" };
+    private readonly TextBox _services = new() { Text = "MSSQLSERVER, SQLSERVERAGENT" };
     private readonly CheckBox _sqlEnabled = new() { Text = "Habilitar monitoramento SQL Server", Checked = true, AutoSize = true };
     private readonly TextBox _sqlServer = new() { Text = "localhost" };
     private readonly TextBox _sqlDatabase = new() { Text = "master" };

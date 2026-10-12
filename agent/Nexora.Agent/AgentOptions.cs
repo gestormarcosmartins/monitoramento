@@ -14,7 +14,11 @@ public sealed class AgentOptions
     public int HostMetricsSeconds { get; set; } = 300;
     public int SqlHealthSeconds { get; set; } = 600;
     public int SqlPerformanceSeconds { get; set; } = 21600;
-    public string[] EssentialServices { get; set; } = ["MSSQLSERVER", "SQLSERVERAGENT", "NexoraAgent"];
+    // "NexoraAgent" was removed from this default: it named the Windows Service this
+    // agent used to install as, before switching to a Scheduled Task (SCM broke
+    // Microsoft.Data.SqlClient's native SNI library). That service no longer exists
+    // by design, so checking for it here always reports a false "down".
+    public string[] EssentialServices { get; set; } = ["MSSQLSERVER", "SQLSERVERAGENT"];
     public bool SqlEnabled { get; set; } = OperatingSystem.IsWindows();
     public string SqlServer { get; set; } = "localhost";
     public string SqlDatabase { get; set; } = "master";
