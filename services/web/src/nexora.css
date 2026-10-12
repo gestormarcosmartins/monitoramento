@@ -1911,6 +1911,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .noc-card header strong, .noc-card header small { display: block; overflow-wrap: anywhere; }
 .noc-card header small { color: #64748B; }
 .noc-card-meta { margin: 0; color: #0F172A; font-size: 14px; }
+.noc-card-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.noc-card-toggle .action-icon { flex-shrink: 0; color: #64748B; }
+.noc-card.open .noc-card-toggle .action-icon { color: #0F172A; }
 .noc-badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; background: #DCFCE7; color: #166534; }
 .noc-badge.critical { background: #FEE2E2; color: #991B1B; }
 .noc-badge.attention { background: #FEF3C7; color: #92400E; }

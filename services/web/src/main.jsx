@@ -500,6 +500,8 @@ function ActionIcon({ name }) {
     download: "M12 3v12m-5-5 5 5 5-5M5 21h14",
     columns: "M4 5h16v14H4V5Zm5 0v14m6-14v14",
     more: "M5 12h.01M12 12h.01M19 12h.01",
+    "chevron-down": "m6 9 6 6 6-6",
+    "chevron-up": "m18 15-6-6-6 6",
   };
   return <svg className="action-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] || paths.more} /></svg>;
 }
@@ -845,7 +847,6 @@ function Toast({ notice, onClose }) {
 function NotificationChannels({
   channel,
   settings,
-  tenantName,
   tenantId,
   token,
   submit,
@@ -916,12 +917,12 @@ function NotificationChannels({
         <div>
           <h2>{channel === "email" ? "E-mail SMTP" : "WhatsApp"}</h2>
           <p>
-            Parametrização exclusiva de {tenantName}. {channel === "email" ? "Configure o servidor responsável pelos envios de e-mail." : "Configure a integração de mensagens pela Evolution API."} Senhas e chaves permanecem protegidas.
+            Parametrização única da plataforma, compartilhada por todas as empresas. {channel === "email" ? "Configure o servidor responsável pelos envios de e-mail." : "Configure a integração de mensagens pela Evolution API."} Senhas e chaves permanecem protegidas.
           </p>
         </div>
       </div>
       <form
-        key={`${channel}-${settings.updated_at || tenantId}`}
+        key={`${channel}-${settings.updated_at || "default"}`}
         className="channel-form"
         onSubmit={(e) => {
           e.preventDefault();
@@ -1112,6 +1113,12 @@ const nocStatusLabels = { critical: "Crítico", attention: "Atenção", operatio
   nocCriticalityLabels = { critical: "Crítica", high: "Alta", medium: "Média", low: "Baixa" };
 function NocDashboard({ data, loading, onRetry }) {
   const [search, setSearch] = useState(""), [company, setCompany] = useState(""), [status, setStatus] = useState(""), [criticality, setCriticality] = useState(""), [onlyProblems, setOnlyProblems] = useState(false), [mode, setMode] = useState("cards");
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpanded = (assetId) => setExpanded((prev) => {
+    const next = new Set(prev);
+    next.has(assetId) ? next.delete(assetId) : next.add(assetId);
+    return next;
+  });
   if (loading && !data) return <Loading title="Carregando o painel NOC..." />;
   if (!data) return <Unavailable title="Não foi possível carregar o painel NOC." onRetry={onRetry} />;
   const environments = data.environments || [], summary = data.summary || {};
@@ -1143,12 +1150,18 @@ function NocDashboard({ data, loading, onRetry }) {
     {filters.length > 0 && <div className="noc-chips">{filters.map(([label, value, remove]) => <button type="button" key={label} onClick={remove} aria-label={`Remover filtro ${label}: ${value}`}>{label}: {value} ×</button>)}<button type="button" className="link" onClick={clear}>Limpar</button></div>}
     <p className="noc-count" aria-live="polite">{rows.length} de {environments.length} ambiente(s)</p>
     {!environments.length ? <Empty>Nenhum ambiente monitorado nas empresas autorizadas.</Empty> : !rows.length ? <NoResults description="Ajuste ou limpe os filtros." /> : mode === "cards"
-      ? <div className="noc-grid">{rows.map((item) => <article className={`noc-card ${item.status}`} key={item.asset_id}>
-          <header><div><strong>{item.environment}</strong><small>{item.company}</small></div><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></header>
-          <p className="noc-card-meta"><b>{item.services_total}</b> serviço(s) · {item.availability == null ? "—" : `${item.availability}%`} operacional{item.services_failed ? ` · ${item.services_failed} em falha` : ""}</p>
-          <ul className="noc-services">{item.services.map((service) => <li key={service.id} className={service.state} title={`${service.name}: ${nocServiceLabels[service.state]}`}><i aria-hidden="true" />{service.name}<span>{nocServiceLabels[service.state]}</span></li>)}</ul>
-          <footer><span>Atualizado: {fmtTime(item.last_checked_at)}</span>{item.open_alerts > 0 && <span>{item.open_alerts} alerta(s) aberto(s)</span>}</footer>
-        </article>)}</div>
+      ? <div className="noc-grid">{rows.map((item) => {
+          const open = expanded.has(item.asset_id);
+          return <article className={`noc-card ${item.status} ${open ? "open" : ""}`} key={item.asset_id}>
+            <header><div><strong>{item.environment}</strong><small>{item.company}</small></div><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></header>
+            <button type="button" className="noc-card-toggle" aria-expanded={open} onClick={() => toggleExpanded(item.asset_id)}>
+              <p className="noc-card-meta"><b>{item.services_total}</b> serviço(s) · {item.availability == null ? "—" : `${item.availability}%`} operacional{item.services_failed ? ` · ${item.services_failed} em falha` : ""}</p>
+              <ActionIcon name={open ? "chevron-up" : "chevron-down"} />
+            </button>
+            {open && <ul className="noc-services">{item.services.map((service) => <li key={service.id} className={service.state} title={`${service.name}: ${nocServiceLabels[service.state]}`}><i aria-hidden="true" />{service.name}<span>{nocServiceLabels[service.state]}</span></li>)}</ul>}
+            <footer><span>Atualizado: {fmtTime(item.last_checked_at)}</span>{item.open_alerts > 0 && <span>{item.open_alerts} alerta(s) aberto(s)</span>}</footer>
+          </article>;
+        })}</div>
       : <div className="noc-table-wrap"><table className="noc-table"><thead><tr><th>Status</th><th>Empresa</th><th>Ambiente</th><th>Criticidade</th><th>Serviços</th><th>Em falha</th><th>Sem dados</th><th>Alertas</th><th>Última coleta</th></tr></thead><tbody>{rows.map((item) => <tr key={item.asset_id}><td><span className={`noc-badge ${item.status}`}>{nocStatusLabels[item.status]}</span></td><td>{item.company}</td><td>{item.environment}</td><td>{nocCriticalityLabels[item.criticality]}</td><td>{item.services_total}</td><td>{item.services_failed}</td><td>{item.services_no_communication}</td><td>{item.open_alerts}</td><td>{fmtTime(item.last_checked_at)}</td></tr>)}</tbody></table></div>}
   </section>;
 }
@@ -3943,7 +3956,6 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
               <NotificationChannels
                 channel={view === "settings-email" ? "email" : "whatsapp"}
                 settings={notificationSettings}
-                tenantName={tenant?.name}
                 tenantId={tenantId}
                 token={token}
                 submit={submit}
@@ -3953,8 +3965,8 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
             ) : (
               <section className="panel">
                 <Empty>
-                  Selecione uma empresa para parametrizar os canais de
-                  notificação.
+                  Selecione uma empresa para acessar a parametrização dos
+                  canais de notificação da plataforma.
                 </Empty>
               </section>
             ))}{" "}
