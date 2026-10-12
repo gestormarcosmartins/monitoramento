@@ -58,7 +58,10 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(heartbeat.heartbeat_interval_seconds, 60)
         self.assertEqual(heartbeat.services_interval_seconds, 120)
 
-    def test_enroll_response_exposes_agent_id(self) -> None:
+    @patch("central_monitor.agent_api.get_settings")
+    def test_enroll_response_exposes_agent_id(self, settings) -> None:
+        settings.return_value.central_secret_key = "x" * 32
+        settings.return_value.central_public_url = "https://nexora.example"
         # Regressão: o agente (Credentials.agent_id) exige a chave "agent_id" na resposta.
         # Devolver apenas "id" (a coluna crua do banco) quebra EnrollAsync em todo agente real.
         connection = EnrollConnection()
