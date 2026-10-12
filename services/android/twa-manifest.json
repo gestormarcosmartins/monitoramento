@@ -1,0 +1,27 @@
+{
+  "packageId": "br.com.simmservices.nexora",
+  "host": "simmservices.com.br",
+  "name": "Nexora",
+  "launcherName": "Nexora",
+  "display": "standalone",
+  "themeColor": "#0f172a",
+  "themeColorDark": "#0f172a",
+  "navigationColor": "#0f172a",
+  "navigationColorDark": "#0f172a",
+  "backgroundColor": "#0f172a",
+  "startUrl": "/m/",
+  "iconUrl": "https://simmservices.com.br/m/icon-512.png",
+  "maskableIconUrl": "https://simmservices.com.br/m/icon-512.png",
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "enableNotifications": true,
+  "orientation": "portrait",
+  "fallbackType": "customtabs",
+  "signingKey": {
+    "path": "./nexora.keystore",
+    "alias": "nexora"
+  },
+  "webManifestUrl": "https://simmservices.com.br/m/manifest.webmanifest",
+  "fullScopeUrl": "https://simmservices.com.br/m/",
+  "minSdkVersion": 21
+}

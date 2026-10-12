@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="/m/manifest.webmanifest">
+<link rel="icon" href="/m/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/m/icon.svg">
+<title>Nexora Mobile</title>
+<link rel="stylesheet" href="/m/styles.css">
+</head>
+<body>
+<header class="bar">
+  <h1>Nexora</h1>
+  <select id="company" aria-label="Empresa" hidden></select>
+  <button id="push" class="ghost" hidden aria-label="Notificações">🔔</button>
+  <button id="logout" class="ghost" hidden>Sair</button>
+</header>
+<main id="view" aria-live="polite"></main>
+<nav class="tabs" id="tabs" hidden>
+  <button data-tab="home" class="on">Resumo</button>
+  <button data-tab="alerts">Alertas</button>
+  <button data-tab="incidents">Incidentes</button>
+</nav>
+<script src="/m/app.js"></script>
+</body>
+</html>

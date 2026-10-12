@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- HTTP is enabled only to support the initial LAN test environment. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

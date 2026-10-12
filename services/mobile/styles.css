@@ -1,0 +1,26 @@
+:root{--bg:#0f172a;--card:#1e293b;--fg:#e2e8f0;--mut:#94a3b8;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--acc:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;padding-bottom:72px}
+.bar{position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;padding:calc(8px + env(safe-area-inset-top)) 16px 8px;background:var(--bg);border-bottom:1px solid #334155}
+.bar h1{font-size:18px;margin:0;flex:1}
+select,button{min-height:44px;border-radius:10px;border:1px solid #334155;background:var(--card);color:var(--fg);font:inherit;padding:0 12px}
+button.primary{background:var(--acc);color:#0f172a;border:0;font-weight:600}
+button.ghost{background:transparent}
+main{padding:16px;max-width:720px;margin:auto}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px}
+.card .n{font-size:28px;font-weight:700}
+.card .l{color:var(--mut);font-size:13px}
+.item{display:block;width:100%;text-align:left;background:var(--card);border:0;border-left:5px solid var(--mut);border-radius:12px;padding:12px;margin-bottom:10px;min-height:44px}
+.item small{color:var(--mut);display:block}
+.s-critical,.s-high,.s-disaster{border-left-color:var(--bad)}
+.s-medium,.s-average,.s-warning{border-left-color:var(--warn)}
+.s-low,.s-info{border-left-color:var(--acc)}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;background:#334155;font-size:12px;margin-right:6px}
+.tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--bg);border-top:1px solid #334155;padding-bottom:env(safe-area-inset-bottom)}
+.tabs button{flex:1;border:0;border-radius:0;background:transparent;color:var(--mut)}
+.tabs .on{color:var(--acc);font-weight:600}
+.err{color:var(--bad)}.mut{color:var(--mut)}
+textarea{width:100%;min-height:80px;border-radius:10px;border:1px solid #334155;background:var(--card);color:var(--fg);font:inherit;padding:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.row button{flex:1}

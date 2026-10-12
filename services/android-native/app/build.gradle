@@ -1,0 +1,23 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "br.com.simmservices.nexora"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "br.com.simmservices.nexora"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+}

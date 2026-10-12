@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {"build": "vite build"},
+  "scripts": {"dev": "vite", "build": "vite build", "test": "node --test tests/*.test.mjs", "test:responsive": "playwright test"},
   "dependencies": {"@vitejs/plugin-react": "latest", "vite": "latest", "typescript": "latest", "react": "latest", "react-dom": "latest"},
-  "devDependencies": {}
+  "devDependencies": {"@axe-core/playwright": "4.10.2", "@playwright/test": "1.56.1"}
 }
