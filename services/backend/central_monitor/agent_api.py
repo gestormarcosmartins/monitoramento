@@ -132,6 +132,11 @@ def _ensure_asset(connection: Any, tenant_id: str, agent_name: str) -> Any:
 
 
 def _ensure_monitors(connection: Any, tenant_id: str, asset_id: Any, agent_name: str, items: tuple) -> None:
+    # GET /agent/config returns every 'push' monitor for the whole tenant, not just this
+    # agent's. A bare code like "host-cpu" collides across every Windows agent in the same
+    # tenant, so each agent's own name is folded into the code to keep it unique
+    # (Nexora.Agent's HostCollector.Operational / SqlServerCollector.OperationalAsync look
+    # up "<code>:<agent name>" to match).
     for code, label, severity, interval_seconds in items:
         connection.execute(
             """INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,
@@ -139,7 +144,7 @@ def _ensure_monitors(connection: Any, tenant_id: str, asset_id: Any, agent_name:
             VALUES (%s,%s,%s,'push',%s,%s,%s,true,'unknown','Aguardando primeiro envio do agente.')
             ON CONFLICT(tenant_id,name) DO UPDATE SET asset_id=excluded.asset_id,monitor_type=excluded.monitor_type,
                 configuration=excluded.configuration,active=true""",
-            (tenant_id, asset_id, f"{agent_name} - {label}", Jsonb({"source": "windows-agent-direct", "code": code}), interval_seconds, severity),
+            (tenant_id, asset_id, f"{agent_name} - {label}", Jsonb({"source": "windows-agent-direct", "code": f"{code}:{agent_name}"}), interval_seconds, severity),
         )
 
 

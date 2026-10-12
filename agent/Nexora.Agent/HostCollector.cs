@@ -119,13 +119,20 @@ public sealed class HostCollector
     /// <summary>Compares host metrics/services against the agent's configured push monitors (codes
     /// host-cpu, host-memory, host-disk, host-services) so they show up as monitor cards, the same
     /// way SqlServerCollector.OperationalAsync does for SQL checks.</summary>
-    public SnapshotEnvelope? Operational(AgentConfiguration config, IEnumerable<string> essentialServiceNames)
+    public SnapshotEnvelope? Operational(AgentConfiguration config, IEnumerable<string> essentialServiceNames, string agentName)
     {
-        var monitors = config.Monitors.Select(m=>new {m,code=Code(m.Configuration)}).Where(x=>x.code is not null).ToDictionary(x=>x.code!,x=>x.m,StringComparer.OrdinalIgnoreCase);
+        // GET /agent/config returns every 'push' monitor for the whole tenant, not just
+        // this agent's — with several Windows agents in the same tenant, a bare code like
+        // "host-cpu" collides across machines (ToDictionary used to throw ArgumentException
+        // on the duplicate key). Monitor codes are provisioned as "<code>:<agent name>" to
+        // stay unique per machine; last-write-wins on a collision is fine here, it would
+        // only happen for two agents sharing the exact same name.
+        var monitors = config.Monitors.Select(m=>new {m,code=Code(m.Configuration)}).Where(x=>x.code is not null)
+            .GroupBy(x=>x.code!, StringComparer.OrdinalIgnoreCase).ToDictionary(g=>g.Key,g=>g.Last().m,StringComparer.OrdinalIgnoreCase);
         if (monitors.Count == 0) return null;
         var now = DateTimeOffset.UtcNow;
         var results = new List<AgentResult>();
-        void Add(string code, bool ok, string message) { if (monitors.TryGetValue(code, out var monitor)) results.Add(new(monitor.Id, ok, ok ? "up" : "down", message, now)); }
+        void Add(string code, bool ok, string message) { if (monitors.TryGetValue($"{code}:{agentName}", out var monitor)) results.Add(new(monitor.Id, ok, ok ? "up" : "down", message, now)); }
 
         var cpu = CpuPercent();
         if (cpu is not null) Add("host-cpu", cpu < 90, $"Uso de CPU: {cpu}%");

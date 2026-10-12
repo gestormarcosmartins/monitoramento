@@ -43,10 +43,14 @@ public sealed class SqlServerCollector
     public async Task<SnapshotEnvelope?> OperationalAsync(AgentConfiguration config, CancellationToken token)
     {
         if(!_options.SqlEnabled) return null;
-        var monitors=config.Monitors.Select(m=>new {m,code=Code(m.Configuration)}).Where(x=>x.code is not null).ToDictionary(x=>x.code!,x=>x.m,StringComparer.OrdinalIgnoreCase);
+        // See HostCollector.Operational: codes are "<code>:<agent name>" because
+        // GET /agent/config returns every push monitor for the tenant, and a bare code
+        // collides across multiple SQL-enabled agents sharing that tenant.
+        var monitors=config.Monitors.Select(m=>new {m,code=Code(m.Configuration)}).Where(x=>x.code is not null)
+            .GroupBy(x=>x.code!, StringComparer.OrdinalIgnoreCase).ToDictionary(g=>g.Key,g=>g.Last().m,StringComparer.OrdinalIgnoreCase);
         var results=new List<AgentResult>(); var now=DateTimeOffset.UtcNow;
         async Task Add(string code,string sql,Func<List<Dictionary<string,object?>>, (bool ok,string message)> evaluate) {
-            if(!monitors.TryGetValue(code,out var monitor)) return;
+            if(!monitors.TryGetValue($"{code}:{_options.AgentName}",out var monitor)) return;
             try { var evaluation=evaluate(await QueryAsync(sql,token)); results.Add(new(monitor.Id,evaluation.ok,evaluation.ok?"up":"down",evaluation.message,now)); }
             catch(Exception e){ results.Add(new(monitor.Id,false,"unknown",e.Message,now)); }
         }
@@ -60,7 +64,7 @@ public sealed class SqlServerCollector
     public async Task<SnapshotEnvelope?> PerformanceAsync(AgentConfiguration config,CancellationToken token)
     {
         if(!_options.SqlEnabled) return null;
-        var monitor=config.Monitors.FirstOrDefault(m=>string.Equals(Code(m.Configuration),"sql-performance",StringComparison.OrdinalIgnoreCase)); if(monitor is null)return null;
+        var monitor=config.Monitors.FirstOrDefault(m=>string.Equals(Code(m.Configuration),$"sql-performance:{_options.AgentName}",StringComparison.OrdinalIgnoreCase)); if(monitor is null)return null;
         var now=DateTimeOffset.UtcNow;
         try { var rows=await QueryAsync("SELECT TOP 10 qs.execution_count,qs.total_worker_time/1000 total_cpu_ms,qs.total_logical_reads,qs.total_elapsed_time/1000 total_elapsed_ms FROM sys.dm_exec_query_stats qs ORDER BY qs.total_worker_time DESC",token); return new($"sql-performance-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}",now,[new(monitor.Id,true,"up",$"Análise concluída: {rows.Count} principais consultas avaliadas.",now)],new(){["source"]="sql-server-direct",["profile"]="performance",["recommendations"]="Revisar consultas de maior CPU e leituras; nenhuma alteração foi executada.",["sample_size"]=rows.Count}); }
         catch(Exception error){return new($"sql-performance-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}",now,[new(monitor.Id,false,"unknown",error.Message,now)],new(){["source"]="sql-server-direct",["profile"]="performance"});}
