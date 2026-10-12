@@ -5,16 +5,22 @@ from typing import Any
 
 import httpx
 
-from .db import tenant_connection
+from .db import connect, tenant_connection
 from .secrets import decrypt_secret, encrypt_secret
 from .settings import get_settings
 
 PRIORITY = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
-def get_notification_settings(tenant_id: str, include_secrets: bool = False) -> dict[str, Any]:
-    with tenant_connection(tenant_id) as connection:
-        row = connection.execute("SELECT * FROM cm_notification_settings WHERE tenant_id=%s", (tenant_id,)).fetchone()
+def get_notification_settings(tenant_id: str | None = None, include_secrets: bool = False) -> dict[str, Any]:
+    """Read the single platform-wide WhatsApp/SMTP configuration.
+
+    ``tenant_id`` is accepted (and ignored for the lookup) so existing per-incident
+    callers that still thread a tenant through don't need to change: notifications
+    are routed per tenant, but sent through one shared Evolution/SMTP account.
+    """
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM cm_notification_settings_global WHERE id=true").fetchone()
     defaults, data = get_settings(), dict(row or {})
     result = {
         "smtp_enabled": data.get("smtp_enabled", bool(defaults.smtp_host)),
@@ -36,27 +42,32 @@ def get_notification_settings(tenant_id: str, include_secrets: bool = False) -> 
     return result
 
 
-def save_notification_settings(tenant_id: str, values: dict[str, Any]) -> dict[str, Any]:
-    with tenant_connection(tenant_id) as connection:
-        current = connection.execute("SELECT smtp_password_encrypted,evolution_api_key_encrypted FROM cm_notification_settings WHERE tenant_id=%s", (tenant_id,)).fetchone() or {}
+def save_notification_settings(tenant_id: str | None, values: dict[str, Any]) -> dict[str, Any]:
+    """Persist the single platform-wide WhatsApp/SMTP configuration.
+
+    ``tenant_id`` is accepted (and ignored) for call-site compatibility; see
+    ``get_notification_settings``.
+    """
+    with connect() as connection:
+        current = connection.execute("SELECT smtp_password_encrypted,evolution_api_key_encrypted FROM cm_notification_settings_global WHERE id=true").fetchone() or {}
         smtp_secret = encrypt_secret(values.get("smtp_password")) if values.get("smtp_password") else current.get("smtp_password_encrypted")
         evolution_secret = encrypt_secret(values.get("evolution_api_key")) if values.get("evolution_api_key") else current.get("evolution_api_key_encrypted")
         connection.execute(
-            """INSERT INTO cm_notification_settings(
-                tenant_id,smtp_enabled,smtp_host,smtp_port,smtp_username,smtp_password_encrypted,
+            """INSERT INTO cm_notification_settings_global(
+                id,smtp_enabled,smtp_host,smtp_port,smtp_username,smtp_password_encrypted,
                 smtp_from_address,smtp_tls,evolution_enabled,evolution_api_url,
                 evolution_api_key_encrypted,evolution_instance,updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
-            ON CONFLICT (tenant_id) DO UPDATE SET
+            VALUES (true,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+            ON CONFLICT (id) DO UPDATE SET
                 smtp_enabled=excluded.smtp_enabled,smtp_host=excluded.smtp_host,smtp_port=excluded.smtp_port,
                 smtp_username=excluded.smtp_username,smtp_password_encrypted=excluded.smtp_password_encrypted,
                 smtp_from_address=excluded.smtp_from_address,smtp_tls=excluded.smtp_tls,
                 evolution_enabled=excluded.evolution_enabled,evolution_api_url=excluded.evolution_api_url,
                 evolution_api_key_encrypted=excluded.evolution_api_key_encrypted,
                 evolution_instance=excluded.evolution_instance,updated_at=now()""",
-            (tenant_id, values["smtp_enabled"], values.get("smtp_host") or None, values["smtp_port"], values.get("smtp_username") or None, smtp_secret, values.get("smtp_from_address") or None, values["smtp_tls"], values["evolution_enabled"], values.get("evolution_api_url") or None, evolution_secret, values.get("evolution_instance") or None),
+            (values["smtp_enabled"], values.get("smtp_host") or None, values["smtp_port"], values.get("smtp_username") or None, smtp_secret, values.get("smtp_from_address") or None, values["smtp_tls"], values["evolution_enabled"], values.get("evolution_api_url") or None, evolution_secret, values.get("evolution_instance") or None),
         )
-    return get_notification_settings(tenant_id)
+    return get_notification_settings()
 
 
 def send_email(tenant_id: str, target: str, subject: str, body: str) -> None:
