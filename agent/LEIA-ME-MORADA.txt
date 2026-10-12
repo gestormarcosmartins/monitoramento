@@ -1,0 +1,22 @@
+NEXORA AGENT — MORADA / PRODUÇÃO
+
+1. Extraia todo o conteúdo do ZIP para uma pasta local.
+2. Execute Nexora.Agent.Config.exe como administrador.
+3. Na aba Parâmetros, confira o servidor predefinido: https://nexora.simmservices.com.br
+4. Informe o token de ativação de uso único gerado no Nexora.
+5. Confira o nome do agente e a pasta de diagnósticos da Morada.
+6. Abra a aba Banco de Dados, informe servidor/instância, banco, autenticação, usuário e senha.
+7. Use Testar conexão SQL antes de Salvar e instalar.
+6. Defina o intervalo de envio em segundos (padrão: 30; mínimo: 10).
+7. Use “Testar conexão”. Somente prossiga quando a conexão HTTPS for aprovada.
+8. Clique em “Salvar e instalar”. O serviço “Nexora Monitoring Agent” iniciará automaticamente.
+
+IMPORTANTE
+- O domínio nexora.simmservices.com.br deve apontar para o IP fixo Oracle 163.176.67.170.
+- O servidor Oracle deve aceitar HTTPS na porta 443 com certificado válido para nexora.simmservices.com.br.
+- Não envie o token de ativação junto com este ZIP; repasse-o por canal separado.
+- A senha SQL é protegida pelo Windows (DPAPI) e não é gravada no agentsettings.json nem enviada à Central.
+- Heartbeat, serviços, métricas do servidor, saúde SQL e desempenho possuem intervalos independentes.
+- Consultas de desempenho não são executadas em todo heartbeat; o padrão é uma vez a cada 6 horas.
+- A configuração pode ser alterada depois executando novamente Nexora.Agent.Config.exe.
+- Não use HTTPS diretamente pelo IP: certificados públicos normalmente são emitidos para o domínio.

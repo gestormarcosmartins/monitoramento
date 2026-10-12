@@ -1,3 +1,8 @@
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
 server {
     listen 80;
     server_name _;
@@ -8,7 +13,7 @@ server {
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
     }
 
     location /auth/ {
@@ -16,7 +21,7 @@ server {
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
     }
 
     location /db-monitor/api/ {
@@ -36,6 +41,17 @@ server {
         proxy_set_header Accept-Encoding "";
         sub_filter_once off;
         sub_filter '/api/' '/db-monitor/api/';
+    }
+
+    location = /.well-known/assetlinks.json {
+        alias /usr/share/nginx/wellknown/assetlinks.json;
+        default_type application/json;
+    }
+
+    location /m/ {
+        alias /usr/share/nginx/mobile/;
+        try_files $uri /m/index.html;
+        add_header Cache-Control "no-cache";
     }
 
     location = / { proxy_pass http://web:80/; }

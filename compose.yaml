@@ -43,6 +43,9 @@ services:
     command: ["uvicorn", "central_monitor.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment: &backend-environment
       CENTRAL_DATABASE_URL: postgresql://central_app:${CENTRAL_DB_PASSWORD}@postgres:5432/central_monitor
+      DATABASE_POOL_MIN_SIZE: ${DATABASE_POOL_MIN_SIZE:-2}
+      DATABASE_POOL_MAX_SIZE: ${DATABASE_POOL_MAX_SIZE:-12}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-5}
       REDIS_URL: redis://redis:6379/0
       CENTRAL_SECRET_KEY: ${CENTRAL_SECRET_KEY}
       CENTRAL_PUBLIC_URL: ${CENTRAL_PUBLIC_URL:-http://localhost:8090}
@@ -56,6 +59,9 @@ services:
       GLPI_USERNAME: ${GLPI_USERNAME:-glpi}
       GLPI_PASSWORD: ${GLPI_PASSWORD:-glpi}
       SMTP_HOST: ${SMTP_HOST:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:noreply@nexora.local}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
@@ -237,12 +243,16 @@ services:
   gateway:
     image: nginx:1.28-alpine
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${CENTRAL_BIND_ADDRESS:-127.0.0.1}:${CENTRAL_HTTP_PORT:-8090}:80"
     environment:
       BENNER_MONITOR_UPSTREAM: ${BENNER_MONITOR_UPSTREAM:-http://host.docker.internal:8091}
     volumes:
       - ./infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./services/mobile:/usr/share/nginx/mobile:ro
+      - ./infra/wellknown:/usr/share/nginx/wellknown:ro
     depends_on:
       api:
         condition: service_healthy

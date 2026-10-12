@@ -1,0 +1,25 @@
+{
+  "Agent": {
+    "ServerUrl": "https://nexora.simmservices.com.br",
+    "TenantId": "",
+    "EnrollmentToken": "",
+    "AgentName": "Morada",
+    "SnapshotDirectory": "C:\\ProgramData\\Nexora\\Monitor\\archive",
+    "DataDirectory": "",
+    "PollSeconds": 30,
+    "HeartbeatSeconds": 30,
+    "ServicesSeconds": 60,
+    "HostMetricsSeconds": 300,
+    "SqlHealthSeconds": 600,
+    "SqlPerformanceSeconds": 21600,
+    "EssentialServices": ["MSSQLSERVER", "SQLSERVERAGENT", "NexoraAgent"],
+    "SqlEnabled": true,
+    "SqlServer": "localhost",
+    "SqlDatabase": "master",
+    "SqlIntegratedSecurity": false,
+    "SqlUser": "",
+    "SqlEncrypt": true,
+    "SqlTrustServerCertificate": true,
+    "SqlCommandTimeoutSeconds": 30
+  }
+}

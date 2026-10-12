@@ -1,0 +1,21 @@
+{
+  "Agent": {
+    "ServerUrl": "https://nexora.simmservices.com.br",
+    "TenantId": "",
+    "EnrollmentToken": "",
+    "AgentName": "Chaveou Produção",
+    "SnapshotDirectory": "/var/lib/nexora-agent/archive",
+    "DataDirectory": "/var/lib/nexora-agent",
+    "PollSeconds": 30,
+    "HeartbeatSeconds": 30,
+    "ServicesSeconds": 60,
+    "HostMetricsSeconds": 300,
+    "EssentialServices": [],
+    "SqlEnabled": false,
+    "ChaveouConnectionString": "",
+    "ChaveouTenantPublicId": "",
+    "ChaveouOperationalSeconds": 60,
+    "ChaveouPerformanceSeconds": 21600,
+    "ChaveouCommandTimeoutSeconds": 30
+  }
+}

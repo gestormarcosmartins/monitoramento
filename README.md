@@ -2,6 +2,10 @@
 
 MVP multiempresa de monitoramento para os cinco clientes iniciais, dimensionado para uma VM Oracle com 2 OCPUs e 12 GB de RAM.
 
+O desenvolvimento funcional e arquitetural deve seguir `docs/NEXORA_DEVELOPMENT_BLUEPRINT.md`, com execução pelos cortes de `docs/NEXORA_DEVELOPMENT_SLICES.md`. O padrão obrigatório das telas permanece em `docs/NEXORA_FRONTEND_STANDARD.md`.
+
+O andamento verificável de cada corte fica em `docs/NEXORA_IMPLEMENTATION_STATUS.md`.
+
 ## O que esta implementado
 
 - Painel web para clientes, ativos, monitores, alertas e incidentes.
@@ -20,7 +24,7 @@ MVP multiempresa de monitoramento para os cinco clientes iniciais, dimensionado 
 - Automacoes homologadas com permissao por ativo, limite horario, cooldown e auditoria.
 - Relatorios de MTTA, MTTR, SLA e fornecedores com exportacao PDF e Excel.
 - Perfis admin, gestor, operador, visualizador, cliente e auditor com isolamento por empresa.
-- Keycloak 26.5 com realm e cliente PKCE importados.
+- Keycloak 26.5 com realm, cliente PKCE S256, validação de nonce, TOTP obrigatório, rotação de refresh token e limites de sessão importados.
 - Um PostgreSQL 17 com bases separadas para Central, Zabbix e Keycloak.
 - Redis, outbox transacional e trilha de auditoria.
 - Orquestrador de acoes separado, com catalogo fechado. A API exige grant por ativo, risco baixo, idempotencia, limite horario e cooldown. A execucao remota permanece desligada por padrao ate existir um agente homologado no cliente.
@@ -41,7 +45,7 @@ O script cria `.env` com segredos aleatorios na primeira execucao e sobe toda a 
 - Zabbix e GLPI nao possuem portas publicadas; sao acessados apenas pela API do Nexora na rede privada.
 - Keycloak Admin: `http://localhost:8090/auth/admin`
 
-O ambiente local exige login pelo Keycloak (`DEV_AUTH_BYPASS=false`). O primeiro administrador operacional deve ser criado no realm `central-monitor`. O bypass pode ser habilitado apenas temporariamente para diagnostico local. Antes de publicar na Oracle, ajuste o dominio no issuer/realm e use HTTPS.
+O ambiente local exige login pelo Keycloak (`DEV_AUTH_BYPASS=false`). O primeiro administrador operacional deve ser criado no realm `central-monitor` e todos os usuários configuram TOTP no primeiro login. O bypass pode ser habilitado apenas temporariamente para diagnostico local. Antes de publicar na Oracle, ajuste o domínio no issuer/realm, use HTTPS e conclua a migração de sessão para BFF descrita em `docs/ADR_SESSION_SECURITY.md`.
 
 Para zerar apenas os dados desta Central e recriar os volumes:
 
@@ -125,4 +129,55 @@ OIDC_ISSUER=https://monitoramento.seudominio.com.br/auth/realms/central-monitor
 O futuro agente e o transportador atual usam as variáveis `NEXORA_SERVER_URL`,
 `NEXORA_TENANT_ID` e `NEXORA_AGENT_TOKEN`. Os argumentos de linha de comando
 continuam disponíveis para sobrescrever esses valores quando necessário.
+
+## Agente de coleta Windows
+
+A Central possui APIs para cadastro, autenticação individual, heartbeat, configuração remota, snapshots, eventos e logs. Cada empresa e cada instalação têm credenciais isoladas.
+
+O código em `agent/Nexora.Agent` lê os JSONs do Benner Health Monitor, relaciona os diagnósticos aos monitores e mantém uma fila local em `C:\ProgramData\Nexora\Agent\queue` quando a internet estiver indisponível. O agente só abre conexões de saída para a Central.
+
+### Coleta do Chaveou em servidor Linux externo
+
+O mesmo agente pode coletar a Torre de Controle do Chaveou diretamente do PostgreSQL local e enviar os estados para monitores `push` cadastrados no cliente Chaveou. O relacionamento é feito por `configuration.sourceCode`, sem depender dos IDs internos entre os dois sistemas.
+
+O pacote Linux fica em `agent/dist/Nexora-Agent-linux-x64.tar.gz`. No servidor do Chaveou, extraia o pacote, copie `agent.env.example` para um arquivo temporário `agent.env`, preencha uma conexão PostgreSQL restrita ao banco local e o `public_id` do tenant e instale:
+
+```bash
+tar -xzf Nexora-Agent-linux-x64.tar.gz
+cp agent.env.example agent.env
+chmod 600 agent.env
+# Edite agent.env sem registrar os segredos no histórico do shell.
+sudo ./install-agent.sh --config "$PWD/agent.env"
+```
+
+O ciclo padrão é de 30 segundos. A cada ciclo o agente:
+
+1. envia heartbeat para a Central;
+2. lê apenas os serviços habilitados de `mo_services` no tenant configurado;
+3. envia estado, código do resultado, latência e horário da última verificação;
+4. mantém o snapshot na fila local se a Central estiver temporariamente indisponível.
+
+A string de conexão não é enviada para a Central nem escrita em logs. O instalador cria o usuário de sistema `nexora-agent`, guarda a configuração como `/etc/nexora-agent/agent.env` com leitura restrita e mantém credenciais e fila offline em `/var/lib/nexora-agent`. O serviço é instalado como `nexora-agent.service` e pode ser acompanhado com `journalctl -u nexora-agent -f`.
+
+Instalação:
+
+1. Em **Administração > Agentes de coleta**, gere uma chave de uso único.
+2. Na máquina de compilação com o SDK .NET 8, execute `agent\build-agent.ps1`.
+3. Em PowerShell como administrador no servidor monitorado, execute:
+
+```powershell
+.\install-agent.ps1 -ServerUrl "https://monitoramento.suaempresa.com" -EnrollmentToken "CHAVE_GERADA" -AgentName "SQL Morada" -SnapshotDirectory "C:\caminho\archive"
+```
+
+Para o teste local, use `http://localhost:8090`. Na Oracle, troque somente `ServerUrl` pelo endereço público HTTPS. Também são aceitas as variáveis `NEXORA_SERVER_URL`, `NEXORA_ENROLLMENT_TOKEN`, `NEXORA_AGENT_NAME` e `NEXORA_SNAPSHOT_DIRECTORY`.
+
+## Validação do frontend
+
+O build Docker do serviço `web` executa, antes de produzir a imagem Nginx:
+
+1. testes de contrato com `npm test`;
+2. build Vite de produção;
+3. matriz Playwright/Chromium com `npm run test:responsive` em 320, 360, 390, 768, 1024, 1366 e 1920 px.
+
+O gate responsivo falha quando o shell ou o conteúdo não aparece, existe overflow horizontal, o botão móvel principal não possui alvo mínimo de 44 px, o foco por teclado não está visível, faltam landmarks acessíveis, o menu não abre por Enter/fecha por Escape ou o axe-core encontra violação WCAG séria ou crítica.
 
