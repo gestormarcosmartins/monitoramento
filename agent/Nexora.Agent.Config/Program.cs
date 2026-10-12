@@ -251,6 +251,14 @@ internal sealed class ConfigurationForm : Form
             Directory.CreateDirectory(InstallDirectory);
             StopAndDeleteService();
             File.Copy(sourceAgent, Path.Combine(InstallDirectory, "Nexora.Agent.exe"), true);
+            // Microsoft.Data.SqlClient needs its native SNI library sitting next to the
+            // exe at runtime; PublishSingleFile does not embed it. Without this file the
+            // service enrolls and sends heartbeats fine but every SQL query throws
+            // "The type initializer for 'Microsoft.Data.SqlClient.TdsParser' threw an
+            // exception" — easy to miss since nothing at install time catches it.
+            const string sniLibrary = "Microsoft.Data.SqlClient.SNI.dll";
+            var sourceSni = Path.Combine(AppContext.BaseDirectory, sniLibrary);
+            if (File.Exists(sourceSni)) File.Copy(sourceSni, Path.Combine(InstallDirectory, sniLibrary), true);
             var payload = new
             {
                 Agent = new
