@@ -124,7 +124,7 @@ def _ensure_asset(connection: Any, tenant_id: str, agent_name: str) -> Any:
     """One environment per agent (machine), shared by its host and SQL monitors."""
     return connection.execute(
         """INSERT INTO cm_assets(tenant_id,name,kind,address,criticality,metadata)
-        VALUES (%s,%s,'server',%s,'critical',%s)
+        VALUES (%s,%s,'windows',%s,'critical',%s)
         ON CONFLICT(tenant_id,name) DO UPDATE SET active=true
         RETURNING id""",
         (tenant_id, agent_name, agent_name, Jsonb({"source": "windows-agent-direct"})),
