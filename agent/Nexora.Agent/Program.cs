@@ -1,6 +1,11 @@
 using Nexora.Agent;
 
 var builder = Host.CreateApplicationBuilder(args);
+// Nexora.Agent.Config writes the settings a human edits to agentsettings.json next to
+// the executable; CreateApplicationBuilder only auto-loads appsettings.json, so without
+// this the service never saw EnrollmentToken/credentials the configurator just saved.
+builder.Configuration.AddJsonFile(
+    Path.Combine(AppContext.BaseDirectory, "agentsettings.json"), optional: true, reloadOnChange: false);
 var environmentOverrides = new Dictionary<string, string?>
 {
     ["Agent:ServerUrl"] = Environment.GetEnvironmentVariable("NEXORA_SERVER_URL"),

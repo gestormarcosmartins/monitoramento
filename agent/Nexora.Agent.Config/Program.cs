@@ -36,7 +36,10 @@ internal sealed class ConfigurationForm : Form
     private readonly NumericUpDown _sqlPerformanceSeconds = new() { Minimum = 900, Maximum = 604800, Value = 21600 };
     private readonly TextBox _services = new() { Text = "MSSQLSERVER, SQLSERVERAGENT, NexoraAgent" };
     private readonly CheckBox _sqlEnabled = new() { Text = "Habilitar monitoramento SQL Server", Checked = true, AutoSize = true };
-    private readonly TextBox _sqlServer = new() { Text = "localhost" };
+    // Left blank on purpose: an unfilled field is how "this machine has no SQL
+    // Server" is expressed (see EffectiveSqlEnabled), so it must not start
+    // pre-filled with a value the user never actually typed.
+    private readonly TextBox _sqlServer = new();
     private readonly TextBox _sqlDatabase = new() { Text = "master" };
     private readonly CheckBox _integrated = new() { Text = "Usar autenticação integrada do Windows", AutoSize = true };
     private readonly TextBox _sqlUser = new();
@@ -47,6 +50,10 @@ internal sealed class ConfigurationForm : Form
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
+    // EnrollmentToken is write-only in the UI (masked, never redisplayed), so when the
+    // field is left blank on a later save — e.g. reopening just to tweak the interval —
+    // we must keep whatever token is already on disk instead of overwriting it with "".
+    private string _existingToken = "";
 
     public ConfigurationForm()
     {
@@ -86,7 +93,7 @@ internal sealed class ConfigurationForm : Form
         sqlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         database.Controls.Add(sqlGrid);
         Add(sqlGrid, "Monitor SQL", _sqlEnabled, "O agente conecta diretamente ao SQL Server e envia diagnósticos ao Nexora.");
-        Add(sqlGrid, "Servidor / instância", _sqlServer, "Ex.: 172.19.19.219, 172.19.19.219\\INSTANCIA ou servidor,porta.");
+        Add(sqlGrid, "Servidor / instância", _sqlServer, "Ex.: 172.19.19.219, 172.19.19.219\\INSTANCIA ou servidor,porta. Deixe em branco se esta máquina não tiver SQL Server.");
         Add(sqlGrid, "Banco inicial", _sqlDatabase, "Use master para saúde da instância; os bancos online serão descobertos automaticamente.");
         Add(sqlGrid, "Autenticação", _integrated, "Desmarcado: autenticação SQL Server com usuário e senha.");
         Add(sqlGrid, "Usuário SQL", _sqlUser, "Conta dedicada de leitura para o monitoramento.");
@@ -136,6 +143,7 @@ internal sealed class ConfigurationForm : Form
         {
             using var document = JsonDocument.Parse(File.ReadAllText(SettingsPath));
             var agent = document.RootElement.GetProperty("Agent");
+            _existingToken = String(agent, "EnrollmentToken", "");
             _server.Text = String(agent, "ServerUrl", DefaultServer);
             _name.Text = String(agent, "AgentName", _name.Text);
             _snapshot.Text = String(agent, "SnapshotDirectory", _snapshot.Text);
@@ -158,6 +166,12 @@ internal sealed class ConfigurationForm : Form
         parent.TryGetProperty(property, out var value) && value.TryGetDecimal(out var number) ? Math.Clamp(number, min, max) : fallback;
     private static bool Boolean(JsonElement parent,string property,bool fallback)=>parent.TryGetProperty(property,out var value)&&value.ValueKind is JsonValueKind.True or JsonValueKind.False?value.GetBoolean():fallback;
 
+    // A machine with no SQL Server simply leaves the field blank — that must not be
+    // treated as a connection failure, only an explicit server value opts into SQL
+    // monitoring. The "Monitor SQL" checkbox alone isn't enough since it stays
+    // checked by default.
+    private bool EffectiveSqlEnabled => _sqlEnabled.Checked && !string.IsNullOrWhiteSpace(_sqlServer.Text);
+
     private SqlConnectionStringBuilder SqlConnectionString()
     {
         if(string.IsNullOrWhiteSpace(_sqlServer.Text))throw new InvalidOperationException("Informe o servidor ou a instância SQL Server.");
@@ -168,6 +182,11 @@ internal sealed class ConfigurationForm : Form
 
     private async Task TestSqlAsync()
     {
+        if (string.IsNullOrWhiteSpace(_sqlServer.Text))
+        {
+            _status.Text = "Nenhum servidor SQL informado: este agente não vai monitorar banco de dados nesta máquina.";
+            return;
+        }
         try{_testSql.Enabled=false;_status.Text="Testando SQL Server...";await using var connection=new SqlConnection(SqlConnectionString().ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT @@SERVERNAME, DB_NAME()",connection){CommandTimeout=15};await command.ExecuteScalarAsync();_status.Text="Conexão com SQL Server aprovada.";}
         catch(Exception error){_status.Text=$"Falha SQL: {error.Message}";MessageBox.Show(this,error.Message,"Conexão SQL reprovada",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         finally{_testSql.Enabled=true;}
@@ -200,7 +219,7 @@ internal sealed class ConfigurationForm : Form
             _status.Text = "Testando conexão...";
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
             var server = ValidServer();
-            if(_sqlEnabled.Checked)SqlConnectionString();
+            if(EffectiveSqlEnabled)SqlConnectionString();
             // The configuration screen validates network/TLS reachability only.
             // Readiness also checks optional server dependencies and may return 503
             // even though this agent can communicate with the Nexora API.
@@ -226,22 +245,31 @@ internal sealed class ConfigurationForm : Form
             if (!File.Exists(sourceAgent)) throw new FileNotFoundException("Nexora.Agent.exe não foi encontrado ao lado do configurador.");
             var credentialsPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexora", "Agent", "credentials.dat");
-            if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(_token.Text))
+            var enrollmentToken = string.IsNullOrWhiteSpace(_token.Text) ? _existingToken : _token.Text.Trim();
+            if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(enrollmentToken))
                 throw new InvalidOperationException("Informe o token de ativação no primeiro cadastro deste computador.");
             Directory.CreateDirectory(InstallDirectory);
             StopAndDeleteService();
             File.Copy(sourceAgent, Path.Combine(InstallDirectory, "Nexora.Agent.exe"), true);
+            // Microsoft.Data.SqlClient needs its native SNI library sitting next to the
+            // exe at runtime; PublishSingleFile does not embed it. Without this file the
+            // service enrolls and sends heartbeats fine but every SQL query throws
+            // "The type initializer for 'Microsoft.Data.SqlClient.TdsParser' threw an
+            // exception" — easy to miss since nothing at install time catches it.
+            const string sniLibrary = "Microsoft.Data.SqlClient.SNI.dll";
+            var sourceSni = Path.Combine(AppContext.BaseDirectory, sniLibrary);
+            if (File.Exists(sourceSni)) File.Copy(sourceSni, Path.Combine(InstallDirectory, sniLibrary), true);
             var payload = new
             {
                 Agent = new
                 {
-                    ServerUrl = server.ToString().TrimEnd('/'), TenantId = "", EnrollmentToken = _token.Text.Trim(),
+                    ServerUrl = server.ToString().TrimEnd('/'), TenantId = "", EnrollmentToken = enrollmentToken,
                     AgentName = _name.Text.Trim(), SnapshotDirectory = _snapshot.Text.Trim(),
                     DataDirectory = @"C:\ProgramData\Nexora\Agent", PollSeconds = (int)_sendSeconds.Value,
                     HeartbeatSeconds = (int)_sendSeconds.Value, ServicesSeconds=(int)_servicesSeconds.Value, HostMetricsSeconds=(int)_hostSeconds.Value,
                     SqlHealthSeconds=(int)_sqlHealthSeconds.Value,SqlPerformanceSeconds=(int)_sqlPerformanceSeconds.Value,
                     EssentialServices=_services.Text.Split(',',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries),
-                    SqlEnabled=_sqlEnabled.Checked,SqlServer=_sqlServer.Text.Trim(),SqlDatabase=_sqlDatabase.Text.Trim(),SqlIntegratedSecurity=_integrated.Checked,
+                    SqlEnabled=EffectiveSqlEnabled,SqlServer=_sqlServer.Text.Trim(),SqlDatabase=_sqlDatabase.Text.Trim(),SqlIntegratedSecurity=_integrated.Checked,
                     SqlUser=_sqlUser.Text.Trim(),SqlEncrypt=_sqlEncrypt.Checked,SqlTrustServerCertificate=_trustCertificate.Checked,SqlCommandTimeoutSeconds=30
                 }
             };
