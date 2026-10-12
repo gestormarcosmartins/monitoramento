@@ -126,7 +126,8 @@ def enroll(payload: EnrollRequest) -> dict[str, Any]:
             RETURNING id,tenant_id,name,machine_id,configuration""",
             (tenant_id,payload.name,payload.machine_id,_hash(agent_token),payload.version,Jsonb(payload.capabilities),now),
         ).fetchone()
-    return {**agent, "agent_token": agent_token, "server_url": get_settings().central_public_url}
+    agent_id = agent.pop("id")
+    return {**agent, "agent_id": agent_id, "agent_token": agent_token, "server_url": get_settings().central_public_url}
 
 
 @router.get("/agents")
