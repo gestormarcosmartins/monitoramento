@@ -3,6 +3,7 @@ from io import BytesIO
 from typing import Any, Literal
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from openpyxl import Workbook
@@ -15,7 +16,9 @@ from reportlab.pdfgen import canvas
 from .auth import Identity, current_identity, tenant_header
 from .access_scope import incident_scope
 from .db import connect, tenant_connection
+from .keycloak_admin import KeycloakAdminClient, KeycloakUserExistsError
 from .notifications import get_notification_settings, get_whatsapp_connection, save_notification_settings, send_email, send_whatsapp
+from .settings import get_settings
 
 router = APIRouter(prefix="/api/v1", tags=["operations"])
 ROLES = ("admin", "manager", "operator", "viewer", "client", "auditor")
@@ -137,6 +140,19 @@ class MembershipPayload(BaseModel):
 class UserAccessPayload(BaseModel):
     is_master: bool = False
     tenant_ids: list[UUID] = Field(default_factory=list)
+
+
+class UserCreatePayload(BaseModel):
+    email: EmailStr
+    display_name: str = Field(min_length=1, max_length=200)
+    is_master: bool = False
+    tenant_ids: list[UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_access(self):
+        if not self.is_master and not self.tenant_ids:
+            raise ValueError("Informe ao menos uma empresa ou marque como Master")
+        return self
 
 
 class AccessGrantPayload(BaseModel):
@@ -476,6 +492,50 @@ def delete_maintenance(item_id:str,tenant_id:str=Depends(tenant_header),identity
         row=c.execute("UPDATE cm_maintenance_windows SET active=false WHERE tenant_id=%s AND id=%s AND active RETURNING id",(tenant_id,item_id)).fetchone()
         if not row: raise HTTPException(404,"Maintenance window not found")
         c.execute("INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'inactivate','maintenance_window',%s)",(tenant_id,actor["id"],item_id))
+
+
+@router.post("/users",status_code=201)
+def create_user(payload:UserCreatePayload,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity))->dict[str,Any]:
+    actor=authorize(identity,tenant_id)
+    if not actor["is_master"]: raise HTTPException(403,"Master access required")
+    try:
+        keycloak_user=KeycloakAdminClient().create_user(payload.email,payload.display_name)
+    except KeycloakUserExistsError as error:
+        raise HTTPException(409,"Já existe um usuário com este e-mail no Keycloak") from error
+    except httpx.HTTPError as error:
+        raise HTTPException(502,f"Falha ao criar usuário no Keycloak: {error}") from error
+    with connect() as c:
+        c.execute("SELECT pg_advisory_xact_lock(20261011)")
+        try:
+            row=c.execute("""INSERT INTO cm_users(external_subject,email,display_name,is_master)
+                VALUES (%s,%s,%s,%s) RETURNING id,external_subject,email,display_name,active,is_master""",
+                (keycloak_user["id"],payload.email,payload.display_name,payload.is_master)).fetchone()
+        except UniqueViolation as error:
+            raise HTTPException(409,"Já existe um usuário com este e-mail no Nexora") from error
+    target_ids=list(dict.fromkeys(str(item) for item in payload.tenant_ids))
+    if payload.is_master:
+        with connect() as c:
+            c.execute("UPDATE cm_users SET is_master=false WHERE is_master AND id<>%s",(row["id"],))
+    else:
+        for selected_tenant_id in target_ids:
+            with tenant_connection(selected_tenant_id) as tenant_db:
+                tenant_db.execute("""INSERT INTO cm_user_tenants(user_id,tenant_id,role) SELECT %s,id,'viewer' FROM cm_tenants WHERE id=%s
+                    ON CONFLICT(user_id,tenant_id) DO UPDATE SET role='viewer'""",(row["id"],selected_tenant_id))
+                tenant_db.execute("""INSERT INTO cm_access_grants(workspace_id,tenant_id,user_id,role,row_scope,granted_by,reason)
+                    SELECT workspace_id,id,%s,'viewer','company',%s,'Usuário cadastrado pelo Master'
+                    FROM cm_tenants WHERE id=%s""",(row["id"],actor["id"],selected_tenant_id))
+    with tenant_connection(tenant_id) as audit_db:
+        audit_db.execute("INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id,details) VALUES (%s,%s,'user.create','user',%s,%s)",
+            (tenant_id,actor["id"],str(row["id"]),Jsonb({"email":payload.email,"is_master":payload.is_master,"tenant_ids":target_ids})))
+    email_sent=False
+    try:
+        send_email(tenant_id,payload.email,"Acesso ao Nexora",
+            f"Olá {payload.display_name},\n\nSua conta foi criada no Nexora.\n\n"
+            f"Usuário: {payload.email}\nSenha temporária: {keycloak_user['temporary_password']}\n\n"
+            f"Você precisará trocar a senha no primeiro acesso.\n\nAcesse: {get_settings().central_public_url}")
+        email_sent=True
+    except Exception: pass
+    return {**row,"tenant_ids":target_ids,"temporary_password":keycloak_user["temporary_password"],"email_sent":email_sent}
 
 
 @router.get("/users")

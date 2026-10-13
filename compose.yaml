@@ -71,6 +71,10 @@ services:
       OIDC_ISSUER: ${OIDC_ISSUER:-${CENTRAL_PUBLIC_URL:-http://localhost:8090}/auth/realms/central-monitor}
       OIDC_JWKS_URL: http://keycloak:8080/auth/realms/central-monitor/protocol/openid-connect/certs
       OIDC_AUDIENCE: central-monitor
+      KEYCLOAK_BASE_URL: http://keycloak:8080/auth
+      KEYCLOAK_REALM: central-monitor
+      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-30}
       ACTION_EXECUTION_ENABLED: ${ACTION_EXECUTION_ENABLED:-false}
