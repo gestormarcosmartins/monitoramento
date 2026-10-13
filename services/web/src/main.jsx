@@ -2417,7 +2417,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                 ? <Conflict description={error} onReview={clearError} />
                 : <Unavailable title="Não foi possível concluir a operação." description={error} />)}
           {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId}
-            access={businessAccess} isMaster={isMaster} onAccessChange={reloadBusinessAccess}
+            access={businessAccess} isMaster={isMaster} currentUserId={currentUser?.id} onAccessChange={reloadBusinessAccess}
             request={(path,opts={})=>api(path,token,opts,tenantId)}
             ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions}} />}
           {view === "overview" && (
