@@ -19,8 +19,12 @@ class Result:
 
 
 class EnrollConnection:
+    def __init__(self):
+        self.statements: list[str] = []
+
     def execute(self, query, params=()):
         sql = " ".join(str(query).split())
+        self.statements.append(sql)
         if sql.startswith("UPDATE cm_agent_enrollment_tokens"):
             return Result(row={"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})
         if sql.startswith("INSERT INTO cm_agents"):
@@ -31,6 +35,10 @@ class EnrollConnection:
                 "machine_id": "SERVER01:Windows",
                 "configuration": {},
             })
+        if sql.startswith("INSERT INTO cm_assets"):
+            return Result(row={"id": "cccccccc-cccc-cccc-cccc-cccccccccccc"})
+        if sql.startswith("INSERT INTO cm_monitors"):
+            return Result(row=None)
         raise AssertionError(f"Unexpected statement: {sql}")
 
 
@@ -89,6 +97,72 @@ class AgentApiTests(unittest.TestCase):
         self.assertEqual(body["agent_id"], "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
         self.assertNotIn("id", body)
         self.assertIn("agent_token", body)
+        # Only an opt-in sql-server-direct capability should auto-provision monitors.
+        self.assertFalse(any("INSERT INTO cm_monitors" in s for s in connection.statements))
+
+    @patch("central_monitor.agent_api.get_settings")
+    def test_enroll_with_sql_capability_provisions_monitors(self, settings) -> None:
+        settings.return_value.central_secret_key = "x" * 32
+        settings.return_value.central_public_url = "https://nexora.example"
+        # Regressão: antes disso, cada agente Windows com SQL exigia rodar um script
+        # SQL manual depois do cadastro para os monitores aparecerem no painel.
+        connection = EnrollConnection()
+
+        @contextmanager
+        def scoped(_tenant_id):
+            yield connection
+
+        client = TestClient(app)
+        try:
+            with patch("central_monitor.agent_api.tenant_connection", side_effect=scoped):
+                response = client.post(
+                    "/api/v1/agent/enroll",
+                    json={
+                        "enrollment_token": f"{TENANT}.secret",
+                        "name": "Servidor SQL",
+                        "machine_id": "SERVER01:Windows",
+                        "capabilities": ["host-health", "windows-services", "sql-server-direct", "offline-queue"],
+                    },
+                )
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 201)
+        monitor_inserts = [s for s in connection.statements if s.startswith("INSERT INTO cm_monitors")]
+        # windows-services (4 host monitors) + sql-server-direct (5 SQL monitors), sharing one asset.
+        self.assertEqual(len(monitor_inserts), 9)
+        self.assertEqual(len([s for s in connection.statements if s.startswith("INSERT INTO cm_assets")]), 2)
+
+    @patch("central_monitor.agent_api.get_settings")
+    def test_enroll_with_host_capability_only_provisions_host_monitors(self, settings) -> None:
+        settings.return_value.central_secret_key = "x" * 32
+        settings.return_value.central_public_url = "https://nexora.example"
+        # A machine with no SQL Server (e.g. a Hyper-V host) should still get its
+        # CPU/memory/disk/service monitors, without the SQL-only ones.
+        connection = EnrollConnection()
+
+        @contextmanager
+        def scoped(_tenant_id):
+            yield connection
+
+        client = TestClient(app)
+        try:
+            with patch("central_monitor.agent_api.tenant_connection", side_effect=scoped):
+                response = client.post(
+                    "/api/v1/agent/enroll",
+                    json={
+                        "enrollment_token": f"{TENANT}.secret",
+                        "name": "Servidor Hyper-V",
+                        "machine_id": "SERVER02:Windows",
+                        "capabilities": ["host-health", "windows-services", "offline-queue"],
+                    },
+                )
+        finally:
+            client.close()
+
+        self.assertEqual(response.status_code, 201)
+        monitor_names = [s for s in connection.statements if s.startswith("INSERT INTO cm_monitors")]
+        self.assertEqual(len(monitor_names), 4)
 
 
 if __name__ == "__main__":

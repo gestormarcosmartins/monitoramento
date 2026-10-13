@@ -95,15 +95,25 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
             (state, message, monitor["id"]),
         )
         if not ok:
+            # A plain UPDATE-then-INSERT avoids relying on ON CONFLICT inference against
+            # cm_alerts_open_fingerprint_key (a partial unique index on status='open'):
+            # Postgres' conflict-target matching against a partial index predicate proved
+            # unreliable here ("no unique or exclusion constraint matching the ON CONFLICT
+            # specification"), so update the existing open alert if there is one, otherwise
+            # insert a new one.
             alert = connection.execute(
-                """
-                INSERT INTO cm_alerts(tenant_id,monitor_id,fingerprint,severity,title,message)
-                VALUES (%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (tenant_id,fingerprint,status) DO UPDATE SET message=excluded.message
-                RETURNING id,title
-                """,
-                (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message),
+                "UPDATE cm_alerts SET message=%s WHERE tenant_id=%s AND fingerprint=%s AND status='open' RETURNING id,title",
+                (message, tenant_id, alert_fingerprint),
             ).fetchone()
+            if not alert:
+                alert = connection.execute(
+                    """
+                    INSERT INTO cm_alerts(tenant_id,monitor_id,fingerprint,severity,title,message)
+                    VALUES (%s,%s,%s,%s,%s,%s)
+                    RETURNING id,title
+                    """,
+                    (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message),
+                ).fetchone()
             incident = connection.execute(
                 """
                 INSERT INTO cm_incidents(tenant_id,alert_id,title,assignee_team_id,assignee_user_id)

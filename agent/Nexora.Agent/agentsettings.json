@@ -12,7 +12,7 @@
     "HostMetricsSeconds": 300,
     "SqlHealthSeconds": 600,
     "SqlPerformanceSeconds": 21600,
-    "EssentialServices": ["MSSQLSERVER", "SQLSERVERAGENT", "NexoraAgent"],
+    "EssentialServices": ["MSSQLSERVER", "SQLSERVERAGENT"],
     "SqlEnabled": true,
     "SqlServer": "localhost",
     "SqlDatabase": "master",

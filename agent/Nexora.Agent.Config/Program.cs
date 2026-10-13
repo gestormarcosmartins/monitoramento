@@ -34,7 +34,7 @@ internal sealed class ConfigurationForm : Form
     private readonly NumericUpDown _hostSeconds = new() { Minimum = 60, Maximum = 86400, Value = 300 };
     private readonly NumericUpDown _sqlHealthSeconds = new() { Minimum = 60, Maximum = 86400, Value = 600 };
     private readonly NumericUpDown _sqlPerformanceSeconds = new() { Minimum = 900, Maximum = 604800, Value = 21600 };
-    private readonly TextBox _services = new() { Text = "MSSQLSERVER, SQLSERVERAGENT, NexoraAgent" };
+    private readonly TextBox _services = new() { Text = "MSSQLSERVER, SQLSERVERAGENT" };
     private readonly CheckBox _sqlEnabled = new() { Text = "Habilitar monitoramento SQL Server", Checked = true, AutoSize = true };
     // Left blank on purpose: an unfilled field is how "this machine has no SQL
     // Server" is expressed (see EffectiveSqlEnabled), so it must not start
@@ -275,9 +275,7 @@ internal sealed class ConfigurationForm : Form
             };
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
             if(!_integrated.Checked)SaveSqlPassword(_sqlPassword.Text);
-            RunSc($"create {ServiceName} binPath= \"{Path.Combine(InstallDirectory, "Nexora.Agent.exe")}\" start= auto DisplayName= \"Nexora Monitoring Agent\"");
-            RunSc($"description {ServiceName} \"Coleta diagnósticos locais e os envia com segurança para a Central Nexora.\"");
-            RunSc($"start {ServiceName}");
+            InstallScheduledTask(Path.Combine(InstallDirectory, "Nexora.Agent.exe"));
             _token.Clear();
             _status.Text = "Agente instalado e iniciado. A comunicação ocorrerá no intervalo configurado.";
             MessageBox.Show(this, "Agente Nexora instalado e iniciado com sucesso.", "Nexora Agent", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -291,6 +289,8 @@ internal sealed class ConfigurationForm : Form
 
     private static void StopAndDeleteService()
     {
+        // Clean up a legacy sc.exe-based install (pre-dates the switch to a Scheduled
+        // Task) so it can't keep running stale settings alongside the new one.
         RunSc($"stop {ServiceName}", false);
         RunSc($"delete {ServiceName}", false);
         Thread.Sleep(600);
@@ -302,5 +302,42 @@ internal sealed class ConfigurationForm : Form
         if (process is null) throw new InvalidOperationException("Não foi possível executar o gerenciador de serviços do Windows.");
         process.WaitForExit(15000);
         if (required && process.ExitCode != 0) throw new InvalidOperationException(process.StandardError.ReadToEnd() + process.StandardOutput.ReadToEnd());
+    }
+
+    // Running Nexora.Agent.exe as an actual Windows Service (sc.exe/SCM) reproducibly
+    // broke Microsoft.Data.SqlClient's native SNI library on at least one production
+    // server — identical binary, identical SYSTEM account, but "The type initializer
+    // for 'Microsoft.Data.SqlClient.TdsParser' threw an exception" every single time,
+    // while the exact same exe ran perfectly as SYSTEM via a Scheduled Task. A Scheduled
+    // Task that starts at boot, runs as SYSTEM and restarts itself if it ever exits gives
+    // the same "always on" behavior as a service without whatever SCM-specific isolation
+    // was causing that failure.
+    private static void InstallScheduledTask(string exePath)
+    {
+        var script = $"""
+            $ErrorActionPreference = 'Stop'
+            Unregister-ScheduledTask -TaskName 'NexoraAgent' -Confirm:$false -ErrorAction SilentlyContinue
+            $action = New-ScheduledTaskAction -Execute '{exePath}'
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName 'NexoraAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Coleta diagnosticos locais e os envia com seguranca para a Central Nexora.' -Force | Out-Null
+            Start-ScheduledTask -TaskName 'NexoraAgent'
+            """;
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"nexora-install-task-{Guid.NewGuid():N}.ps1");
+        File.WriteAllText(scriptPath, script);
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo(
+                "powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true });
+            if (process is null) throw new InvalidOperationException("Não foi possível executar o PowerShell para criar a tarefa agendada.");
+            process.WaitForExit(30000);
+            if (process.ExitCode != 0) throw new InvalidOperationException(process.StandardError.ReadToEnd() + process.StandardOutput.ReadToEnd());
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
     }
 }
