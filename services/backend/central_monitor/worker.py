@@ -99,7 +99,7 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
                 """
                 INSERT INTO cm_alerts(tenant_id,monitor_id,fingerprint,severity,title,message)
                 VALUES (%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (tenant_id,fingerprint,status) DO UPDATE SET message=excluded.message
+                ON CONFLICT (tenant_id,fingerprint) WHERE status='open' DO UPDATE SET message=excluded.message
                 RETURNING id,title
                 """,
                 (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message),
