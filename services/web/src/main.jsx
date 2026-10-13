@@ -1248,13 +1248,22 @@ function App() {
   const clearError = () => { setError(""); setErrorStatus(0); };
   const featureModes = authContext?.feature_modes_by_company?.[tenantId] || {};
   const featureEnabled = (feature) => featureModeAllowsTraffic(featureModes[feature]);
+  const isMaster = Boolean(currentUser?.is_master || authContext?.user?.is_master);
   const viewAvailable = (candidate) => {
-    if (candidate === "business") return businessAccess.enabled && businessAccess.capabilities?.includes("business.view");
+    // The Master technical user has no implicit Business access, but must still be able to
+    // reach the bootstrap screen (activate the product, designate the first administrator) —
+    // otherwise nobody could ever turn the product on through the UI.
+    if (candidate === "business") return isMaster || (businessAccess.enabled && businessAccess.capabilities?.includes("business.view"));
     if (candidate === "overview") return true;
     if (!featureEnabled(`view:${candidate}`)) return false;
     const required = viewPermissionRequirements[candidate];
     if (!required || !authContext || currentUser?.is_master || authContext.user?.is_master) return true;
     return (authContext.permissions_by_company?.[tenantId] || []).includes(required);
+  };
+  const reloadBusinessAccess = async () => {
+    if (!token || !tenantId) return;
+    try { setBusinessAccess(await api("/api/v1/business/me",token,{},tenantId)); }
+    catch { setBusinessAccess({enabled:false,capabilities:[]}); }
   };
   useEffect(() => {
     let active=true;
@@ -2408,7 +2417,8 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                 ? <Conflict description={error} onReview={clearError} />
                 : <Unavailable title="Não foi possível concluir a operação." description={error} />)}
           {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId}
-            access={businessAccess} request={(path,opts={})=>api(path,token,opts,tenantId)}
+            access={businessAccess} isMaster={isMaster} onAccessChange={reloadBusinessAccess}
+            request={(path,opts={})=>api(path,token,opts,tenantId)}
             ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions}} />}
           {view === "overview" && (
             <section className="dashboard-overview">
