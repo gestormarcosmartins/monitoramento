@@ -365,6 +365,7 @@ const routeFromLocation = () => {
   if (path === "/monitoramento/ambientes/novo") return { view: "assets", assetMode: "new" };
   const editAsset = path.match(/^\/monitoramento\/ambientes\/([^/]+)\/editar$/);
   if (editAsset) return { view: "assets", assetMode: "edit", assetId: decodeURIComponent(editAsset[1]) };
+  if (path === "/administracao/usuarios/novo") return { view: "admin-users", userMode: "new" };
   const editUser = path.match(/^\/administracao\/usuarios\/([^/]+)\/editar$/);
   if (editUser) return { view: "admin-users", userMode: "edit", userId: decodeURIComponent(editUser[1]) };
   const confirmBilling = path.match(/^\/operacao\/pre-faturamento\/([^/]+)\/confirmar-erp$/);
@@ -1399,10 +1400,10 @@ function App() {
     setView("admin-users");
   };
   const openUserForm = (user) => {
-    setEditingAccessUser(user);
-    setEditingUserMaster(Boolean(user.is_master));
+    setEditingAccessUser(user || {});
+    setEditingUserMaster(Boolean(user?.is_master));
     setViewState("admin-users");
-    const path = `/administracao/usuarios/${encodeURIComponent(user.id)}/editar`;
+    const path = user?.id ? `/administracao/usuarios/${encodeURIComponent(user.id)}/editar` : "/administracao/usuarios/novo";
     if (location.pathname !== path) history.pushState({}, "", path);
   };
   const closeBillingConfirmation = () => {
@@ -1888,7 +1889,11 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
   }, [assets, view]);
   useEffect(() => {
     const route = routeFromLocation();
-    if (route.view !== "admin-users" || route.userMode !== "edit") return;
+    if (route.view !== "admin-users" || !route.userMode) return;
+    if (route.userMode === "new") {
+      if (!editingAccessUser) openUserForm();
+      return;
+    }
     const user = users.find((item) => String(item.id) === route.userId);
     if (user) {
       setEditingAccessUser(user);
@@ -3818,7 +3823,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
           {(view === "admin" || view === "admin-users") && (
             <div className="ops-grid">
               {view === "admin-users" && editingAccessUser && (
-                <FormPage title="Editar usuário" description="Defina o Master técnico, contato e as Empresas explicitamente autorizadas." onBack={closeUserForm}>
+                <FormPage title={editingAccessUser.id ? "Editar usuário" : "Novo usuário"} description={editingAccessUser.id ? "Defina o Master técnico, contato e as Empresas explicitamente autorizadas." : "Cria o login no Keycloak e já concede o acesso às Empresas selecionadas."} onBack={closeUserForm}>
                   <form className="nexora-form" onSubmit={async (event) => {
                     event.preventDefault();
                     if (userSubmitting) return;
@@ -3827,6 +3832,13 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                     const tenant_ids = is_master ? [] : form.getAll("tenant_ids");
                     setUserSubmitting(true);
                     try {
+                      if (!editingAccessUser.id) {
+                        const created = await api("/api/v1/users", token, { method: "POST", body: JSON.stringify({ email: form.get("email")?.trim(), display_name: form.get("display_name")?.trim(), is_master, tenant_ids }) }, tenantId);
+                        await refresh();
+                        setNotice({ type: "success", text: created.email_sent ? "Usuário criado e convite enviado por e-mail." : `Usuário criado. Senha temporária (envie com segurança, não será exibida novamente): ${created.temporary_password}` });
+                        closeUserForm();
+                        return;
+                      }
                       await api(`/api/v1/users/${editingAccessUser.id}/notifications`, token, { method: "PUT", body: JSON.stringify({ whatsapp_number: form.get("whatsapp_number")?.trim() || null }) }, tenantId);
                       await api(`/api/v1/users/${editingAccessUser.id}/access`, token, { method: "PUT", body: JSON.stringify({ is_master, tenant_ids }) }, tenantId);
                       if (!is_master && tenantId) await api(`/api/v1/users/${editingAccessUser.id}/departments`, token, { method: "PUT", body: JSON.stringify({ department_ids: form.getAll("department_ids") }) }, tenantId);
@@ -3842,9 +3854,14 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                     }
                   }}>
                     <FormSection title="Identificação e contato">
-                      <label className="field"><span>Nome</span><input value={editingAccessUser.display_name || ""} readOnly aria-readonly="true" /></label>
-                      <label className="field"><span>E-mail</span><input value={editingAccessUser.email || ""} readOnly aria-readonly="true" /></label>
-                      <label className="field"><span>WhatsApp</span><input name="whatsapp_number" defaultValue={editingAccessUser.whatsapp_number || ""} inputMode="tel" placeholder="País + DDD + número" /></label>
+                      {editingAccessUser.id ? <>
+                        <label className="field"><span>Nome</span><input value={editingAccessUser.display_name || ""} readOnly aria-readonly="true" /></label>
+                        <label className="field"><span>E-mail</span><input value={editingAccessUser.email || ""} readOnly aria-readonly="true" /></label>
+                        <label className="field"><span>WhatsApp</span><input name="whatsapp_number" defaultValue={editingAccessUser.whatsapp_number || ""} inputMode="tel" placeholder="País + DDD + número" /></label>
+                      </> : <>
+                        <Input name="display_name" label="Nome" required />
+                        <Input name="email" label="E-mail" type="email" required />
+                      </>}
                       <label className="master-option"><input name="is_master" type="checkbox" checked={editingUserMaster} onChange={(event) => setEditingUserMaster(event.target.checked)} /><span><b>Master</b><small>Acesso administrativo integral. Somente um usuário pode ser Master.</small></span></label>
                     </FormSection>
                     <FormSection title="Empresas permitidas" description={editingUserMaster ? "O Master possui acesso administrativo integral; concessões individuais ficam desabilitadas." : "Marque somente as Empresas necessárias para este usuário."}>
@@ -3852,8 +3869,8 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                         {tenants.map((item) => <label key={item.id}><input name="tenant_ids" type="checkbox" value={item.id} disabled={editingUserMaster} defaultChecked={(editingAccessUser.tenant_ids || []).map(String).includes(String(item.id))} /><span>{item.name}</span></label>)}
                       </div>
                     </FormSection>
-                    {!editingUserMaster && <FormSection title="Departamentos permitidos" description={`Escopo departamental dentro de ${tenant?.name||"Empresa selecionada"}.`}><div className="tenant-access-list user-form-tenant-list">{departments.filter((item)=>item.active).map((item)=><label key={item.id}><input name="department_ids" type="checkbox" value={item.id} defaultChecked={(editingAccessUser.department_ids||[]).map(String).includes(String(item.id))}/><span>{item.name}</span></label>)}</div>{!departments.length&&<p className="empty-state">Nenhum departamento ativo cadastrado.</p>}</FormSection>}
-                    <FormActions onCancel={closeUserForm} submitting={userSubmitting} submitLabel="Salvar usuário" />
+                    {editingAccessUser.id && !editingUserMaster && <FormSection title="Departamentos permitidos" description={`Escopo departamental dentro de ${tenant?.name||"Empresa selecionada"}.`}><div className="tenant-access-list user-form-tenant-list">{departments.filter((item)=>item.active).map((item)=><label key={item.id}><input name="department_ids" type="checkbox" value={item.id} defaultChecked={(editingAccessUser.department_ids||[]).map(String).includes(String(item.id))}/><span>{item.name}</span></label>)}</div>{!departments.length&&<p className="empty-state">Nenhum departamento ativo cadastrado.</p>}</FormSection>}
+                    <FormActions onCancel={closeUserForm} submitting={userSubmitting} submitLabel={editingAccessUser.id ? "Salvar usuário" : "Criar usuário"} />
                   </form>
                 </FormPage>
               )}
@@ -3864,6 +3881,7 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
                     <h2>Cadastro de usuários</h2>
                     <p>O Master administra todo o workspace. Para os demais usuários, marque somente as Empresas autorizadas.</p>
                   </div>
+                  {currentUser?.is_master && <button className="primary" onClick={() => openUserForm()}>＋ Novo usuário</button>}
                 </div>
                 {!currentUser?.is_master && (
                   <p className="info-banner">A gestão de acesso a Empresas é exclusiva do usuário Master.</p>
