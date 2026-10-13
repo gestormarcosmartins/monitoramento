@@ -32,4 +32,43 @@ public sealed class AgentOptions
     public int ChaveouOperationalSeconds { get; set; } = 60;
     public int ChaveouPerformanceSeconds { get; set; } = 21600;
     public int ChaveouCommandTimeoutSeconds { get; set; } = 30;
+
+    // Benner health-monitor port (see Benner/BennerSqlServerDiagnostics.cs): 19 detailed SQL
+    // Server checks pushed straight to POST {ServerUrl}/api/v1/agents/benner/snapshots, bypassing
+    // the normal LocalQueue/SnapshotEnvelope/monitor-matching pipeline entirely, since that
+    // endpoint uses its own auth scheme (a single shared ingest token + tenant id, not this
+    // agent's per-install enrollment token/id) and its own payload shape. Opt-in and disabled
+    // by default because most agent installs don't run the Benner ERP's SQL Server.
+    public bool BennerEnabled { get; set; } = false;
+    // Matches the Python collector's own 30-minute cadence (and the fixed interval_seconds=1800
+    // Nexora's benner.py bakes into the cm_monitors rows it creates for each check).
+    public int BennerIntervalSeconds { get; set; } = 1800;
+    // Shared secret validated server-side against settings().benner_ingest_token - NOT the
+    // per-agent EnrollmentToken/Credentials.AgentToken used by CentralClient's other calls.
+    public string BennerIngestToken { get; set; } = "";
+    // Tenant GUID sent as X-Tenant-ID for this push; conceptually the same tenant the agent
+    // already enrolled under, but kept as its own setting since this endpoint authenticates
+    // independently of CentralClient.Credentials (which may not even be populated yet when
+    // this fires, and uses a different header set regardless).
+    public string BennerTenantId { get; set; } = "";
+
+    // Thresholds below mirror benner_health_monitor/app.py's env-var defaults verbatim
+    // (query_timeout_seconds, alert_thresholds(), backup_thresholds(), io_latency_sql()).
+    public int BennerQueryTimeoutSeconds { get; set; } = 60;
+    public int BennerLatencySampleSeconds { get; set; } = 5;
+    public int BennerIoLatencyMinOps { get; set; } = 20;
+    public int BennerBackupFullMaxAgeHours { get; set; } = 30;
+    public int BennerBackupLogMaxGapMinutes { get; set; } = 45;
+    public int BennerBackupLogLookbackHours { get; set; } = 24;
+    public int BennerDiskFreeWarnPct { get; set; } = 15;
+    public int BennerDiskFreeCritPct { get; set; } = 10;
+    public int BennerTempdbUsedWarnPct { get; set; } = 90;
+    public int BennerTempdbVersionWarnGb { get; set; } = 5;
+    public int BennerTempdbVersionCritGb { get; set; } = 20;
+    public int BennerLongTranWarnMinutes { get; set; } = 15;
+    public int BennerLongTranCritMinutes { get; set; } = 60;
+    public int BennerMemAvailableWarnMb { get; set; } = 4096;
+    public int BennerMemAvailableCritMb { get; set; } = 2048;
+    public int BennerBlockWarnSeconds { get; set; } = 5;
+    public int BennerBlockCritSeconds { get; set; } = 30;
 }

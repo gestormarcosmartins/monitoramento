@@ -26,7 +26,10 @@ def _check_data(item: dict[str, Any]) -> tuple[int, str, str, str, str]:
     number = int(check.get("id") or item.get("check_id") or 0)
     name = str(check.get("name") or item.get("name") or f"Diagnóstico {number}")
     category = str(check.get("category") or item.get("category") or "SQL Server")
-    state = str(item.get("status") or item.get("severity") or "info").lower()
+    # Prefer the fine-grained severity (ok/warning/critical/info/error) over the
+    # coarse status (success/error) so warning/critical checks actually elevate
+    # Nexora's monitor severity/alerts instead of always falling through to "info".
+    state = str(item.get("severity") or item.get("status") or "info").lower()
     message = str(item.get("error") or check.get("description") or state)
     return number, name, category, state, message
 

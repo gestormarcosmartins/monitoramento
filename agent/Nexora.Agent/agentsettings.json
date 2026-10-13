@@ -20,6 +20,10 @@
     "SqlUser": "",
     "SqlEncrypt": true,
     "SqlTrustServerCertificate": true,
-    "SqlCommandTimeoutSeconds": 30
+    "SqlCommandTimeoutSeconds": 30,
+    "BennerEnabled": false,
+    "BennerIntervalSeconds": 1800,
+    "BennerIngestToken": "",
+    "BennerTenantId": ""
   }
 }
