@@ -133,27 +133,33 @@ public sealed class HostCollector
         var now = DateTimeOffset.UtcNow;
         var results = new List<AgentResult>();
         void Add(string code, bool ok, string message) { if (monitors.TryGetValue($"{code}:{agentName}", out var monitor)) results.Add(new(monitor.Id, ok, ok ? "up" : "down", message, now)); }
-
-        var cpu = CpuPercent();
-        if (cpu is not null) Add("host-cpu", cpu < 90, $"Uso de CPU: {cpu}%");
-
-        var memory = Memory();
-        if (memory is not null) Add("host-memory", memory.Value.LoadPercent < 90, $"Uso de memória: {memory.Value.LoadPercent}%");
-
-        var drives = DriveInfo.GetDrives().Where(d => d.IsReady).ToArray();
-        if (drives.Length > 0)
-        {
-            var low = drives.Where(d => d.AvailableFreeSpace * 100d / Math.Max(1, d.TotalSize) < 10).Select(d => d.Name).ToArray();
-            Add("host-disk", low.Length == 0, low.Length == 0 ? "Espaço em disco normal em todas as unidades" : $"Pouco espaço livre: {string.Join(", ", low)}");
+        // Each check runs independently: on a machine where, say, DriveInfo.GetDrives()
+        // throws or hangs-then-throws (observed on a Hyper-V host), one failure must not
+        // silently drop the other three results along with it (Add() for the earlier ones
+        // had already been skipped since the exception unwinds before they run).
+        void AddSafe(string code, Func<(bool ok,string message)?> evaluate) {
+            try { var result=evaluate(); if (result is { } r) Add(code,r.ok,r.message); }
+            catch (Exception error) { if (monitors.TryGetValue($"{code}:{agentName}", out var monitor)) results.Add(new(monitor.Id,false,"unknown",error.Message,now)); }
         }
 
-        var serviceNames = essentialServiceNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
-        if (serviceNames.Length > 0)
-        {
+        AddSafe("host-cpu", () => { var cpu=CpuPercent(); return cpu is null ? null : (cpu<90, $"Uso de CPU: {cpu}%"); });
+
+        AddSafe("host-memory", () => { var memory=Memory(); return memory is null ? null : (memory.Value.LoadPercent<90, $"Uso de memória: {memory.Value.LoadPercent}%"); });
+
+        AddSafe("host-disk", () => {
+            var drives = DriveInfo.GetDrives().Where(d => d.IsReady).ToArray();
+            if (drives.Length == 0) return null;
+            var low = drives.Where(d => d.AvailableFreeSpace * 100d / Math.Max(1, d.TotalSize) < 10).Select(d => d.Name).ToArray();
+            return (low.Length == 0, low.Length == 0 ? "Espaço em disco normal em todas as unidades" : $"Pouco espaço livre: {string.Join(", ", low)}");
+        });
+
+        AddSafe("host-services", () => {
+            var serviceNames = essentialServiceNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
+            if (serviceNames.Length == 0) return null;
             var statuses = Services(serviceNames);
             var down = statuses.Where(s => !s.Ok).Select(s => s.Name).ToArray();
-            Add("host-services", down.Length == 0, down.Length == 0 ? "Todos os serviços essenciais estão ativos" : $"Serviço(s) parado(s): {string.Join(", ", down)}");
-        }
+            return (down.Length == 0, down.Length == 0 ? "Todos os serviços essenciais estão ativos" : $"Serviço(s) parado(s): {string.Join(", ", down)}");
+        });
 
         return results.Count == 0 ? null : new($"host-health-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}", now, results, new(){["source"]="windows-agent-direct",["profile"]="host_health"});
     }
