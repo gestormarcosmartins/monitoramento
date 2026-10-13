@@ -11,13 +11,14 @@ public sealed class AgentWorker : BackgroundService
     private readonly ILogger<AgentWorker> _logger;
     private readonly HostCollector _host;
     private readonly SqlServerCollector _sql;
+    private readonly BusinessCollector _business;
     private readonly IBennerEngineDiagnostics _benner;
 #if CHAVEOU_AGENT
     private readonly ChaveouMonitorCollector _chaveou;
 #endif
     private readonly HashSet<string> _processed = new(StringComparer.OrdinalIgnoreCase);
 
-    public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql,
+    public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql, BusinessCollector business,
         IBennerEngineDiagnostics benner,
 #if CHAVEOU_AGENT
         ChaveouMonitorCollector chaveou,
@@ -29,6 +30,7 @@ public sealed class AgentWorker : BackgroundService
         _options = options.Value;
         _host = host;
         _sql = sql;
+        _business = business;
         _benner = benner;
 #if CHAVEOU_AGENT
         _chaveou = chaveou;
@@ -47,7 +49,7 @@ public sealed class AgentWorker : BackgroundService
             try
             {
                 await _central.EnrollAsync(stoppingToken);
-                var config = await _central.ConfigurationAsync(stoppingToken);
+                var config = await CachedConfigurationAsync(stoppingToken);
                 var now=DateTimeOffset.UtcNow;
                 var health=new Dictionary<string,object?> { ["machine"]=Environment.MachineName,["heartbeat_at"]=now,["queue_depth"]=_queue.Files().Count() };
                 if(now>=nextServices){health["services"]=_host.Services(_options.EssentialServices);nextServices=now.AddSeconds(Math.Max(30,_options.ServicesSeconds));}
@@ -72,15 +74,38 @@ public sealed class AgentWorker : BackgroundService
                     nextChaveouPerformance=now.AddSeconds(Math.Max(900,_options.ChaveouPerformanceSeconds));
                 }
 #endif
+                await _business.CollectAsync(config,stoppingToken);
                 await _central.HeartbeatAsync(health,stoppingToken);
                 await CollectAsync(config, stoppingToken);
                 await FlushAsync(stoppingToken);
+                await _business.FlushAsync(stoppingToken);
             }
             catch (Exception error)
             {
                 _logger.LogError(error, "Falha no ciclo do agente; os dados permanecem na fila local.");
             }
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(10, _options.HeartbeatSeconds)), stoppingToken);
+        }
+    }
+
+    private async Task<AgentConfiguration> CachedConfigurationAsync(CancellationToken token)
+    {
+        var path=Path.Combine(AgentPaths.DataDirectory(_options), "last-agent-config.json");
+        try
+        {
+            var config=await _central.ConfigurationAsync(token);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var tmp=path+".tmp";
+            await File.WriteAllTextAsync(tmp,System.Text.Json.JsonSerializer.Serialize(config),token);
+            File.Move(tmp,path,true);
+            return config;
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            _logger.LogWarning("Using last approved cached agent configuration: {ErrorType}",ex.GetType().Name);
+            if (!File.Exists(path)) throw;
+            var cached=System.Text.Json.JsonSerializer.Deserialize<AgentConfiguration>(await File.ReadAllTextAsync(path,token));
+            return cached ?? throw new InvalidDataException("No valid cached configuration");
         }
     }
 

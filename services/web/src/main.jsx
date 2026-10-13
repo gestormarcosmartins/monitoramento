@@ -5,6 +5,7 @@ import "./grid.css";
 import "./nexora.css";
 import "./home.css";
 import { isTenantResponseCurrent } from "./tenant-request-guard.js";
+import BusinessMonitor from "./business-monitor.jsx";
 const authConfig = {
     clientId: "central-monitor",
     realmUrl: `${location.origin}/auth/realms/central-monitor`,
@@ -199,6 +200,7 @@ const menu = [
     ["portal", "Portal", "catalog"],
     ["clients", "Empresas", "building"],
     ["monitoring", "Monitoramento", "activity"],
+    ["business", "Monitoramento de Negócios", "report"],
     ["incidents", "Incidentes", "alert"],
     ["operations", "Operação", "automation"],
     ["reports", "Relatórios", "report"],
@@ -312,6 +314,7 @@ const viewPermissionRequirements = {
 const featureModeAllowsTraffic = (mode) => mode == null || mode === "write_pilot" || mode === "enabled";
 const viewPaths = {
   overview: "/visao-geral",
+  business: "/negocios/visao-geral",
   databases: "/monitoramento/bancos",
   clients: "/empresas",
   assets: "/monitoramento/ambientes",
@@ -356,6 +359,7 @@ const viewPaths = {
 };
 const routeFromLocation = () => {
   const path = location.pathname.replace(/\/+$/, "") || "/";
+  if (path.startsWith("/negocios/")) return { view: "business" };
   if (path === "/administracao/equipes/novo") return { view: "admin-teams", teamMode: "new" };
   const editTeam = path.match(/^\/administracao\/equipes\/([^/]+)\/editar$/);
   if (editTeam) return { view: "admin-teams", teamMode: "edit", teamId: decodeURIComponent(editTeam[1]) };
@@ -1112,6 +1116,9 @@ function DatabasePerformance() {
 const nocStatusLabels = { healthy: "Saudável", attention: "Atenção", critical: "Crítico", unknown: "Desconhecido", maintenance: "Em manutenção" },
   nocServiceLabels = { ok: "OK", stopped: "Parado", alert: "Alerta", unknown: "Sem dados", inactive: "Inativo" },
   nocCriticalityLabels = { critical: "Crítica", high: "Alta", medium: "Média", low: "Baixa" };
+const AUTO_REFRESH_MS = 30000;
+const AUTO_REFRESH_VIEWS = new Set(["overview", "noc", "databases"]);
+
 function NocDashboard({ data, loading, onRetry }) {
   const [search, setSearch] = useState(""), [company, setCompany] = useState(""), [status, setStatus] = useState(""), [criticality, setCriticality] = useState(""), [onlyProblems, setOnlyProblems] = useState(false), [mode, setMode] = useState("cards");
   const [expanded, setExpanded] = useState(() => new Set());
@@ -1170,6 +1177,7 @@ function NocDashboard({ data, loading, onRetry }) {
 function App() {
   const [token, setToken] = useState(""),
     [currentUser, setCurrentUser] = useState(null),
+    [businessAccess, setBusinessAccess] = useState({enabled:false,capabilities:[]}),
     [authContext, setAuthContext] = useState(null),
     [mobileMenuOpen, setMobileMenuOpen] = useState(false),
     [ready, setReady] = useState(false),
@@ -1241,12 +1249,21 @@ function App() {
   const featureModes = authContext?.feature_modes_by_company?.[tenantId] || {};
   const featureEnabled = (feature) => featureModeAllowsTraffic(featureModes[feature]);
   const viewAvailable = (candidate) => {
+    if (candidate === "business") return businessAccess.enabled && businessAccess.capabilities?.includes("business.view");
     if (candidate === "overview") return true;
     if (!featureEnabled(`view:${candidate}`)) return false;
     const required = viewPermissionRequirements[candidate];
     if (!required || !authContext || currentUser?.is_master || authContext.user?.is_master) return true;
     return (authContext.permissions_by_company?.[tenantId] || []).includes(required);
   };
+  useEffect(() => {
+    let active=true;
+    setBusinessAccess({enabled:false,capabilities:[]});
+    if (token && tenantId) api("/api/v1/business/me",token,{},tenantId)
+      .then(data=>{if(active)setBusinessAccess(data);})
+      .catch(()=>{if(active)setBusinessAccess({enabled:false,capabilities:[]});});
+    return ()=>{active=false;};
+  },[token,tenantId]);
   const activeTenantRef=useRef(tenantId);
   activeTenantRef.current=tenantId;
   const [dashboardTenantIds, setDashboardTenantIds] = useState([]),
@@ -1972,6 +1989,21 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
   useEffect(() => {
     if (token && view === "noc") refreshNoc().then(() => setLastUpdatedAt(new Date())).catch(captureError);
   }, [token, view, dashboardTenantIds]);
+  // Padrão dos dashboards: atualização automática a cada 30 s (pausada com a aba oculta).
+  const autoRefreshRef = useRef(null);
+  autoRefreshRef.current = () => refreshCurrentView().catch(captureError);
+  useEffect(() => {
+    if (!token || !AUTO_REFRESH_VIEWS.has(view)) return;
+    let inFlight = false;
+    const update = () => {
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      Promise.resolve(autoRefreshRef.current()).finally(() => { inFlight = false; });
+    };
+    const timer = setInterval(update, AUTO_REFRESH_MS);
+    document.addEventListener("visibilitychange", update);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", update); };
+  }, [token, tenantId, view]);
   useEffect(() => {
     const label = allNavigationItems.find((item) => item[0] === view)?.[1] || "Nexora";
     document.title = `${label} | Nexora`;
@@ -2375,6 +2407,9 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
               : errorStatus === 409
                 ? <Conflict description={error} onReview={clearError} />
                 : <Unavailable title="Não foi possível concluir a operação." description={error} />)}
+          {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId}
+            access={businessAccess} request={(path,opts={})=>api(path,token,opts,tenantId)}
+            ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions}} />}
           {view === "overview" && (
             <section className="dashboard-overview">
               <section className="dashboard-kpis">
