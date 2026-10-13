@@ -1,0 +1,27 @@
+.nexora-business {display:flex;flex-direction:column;gap:16px;min-width:0}
+.bm-tabs {display:flex;gap:8px;flex-wrap:wrap}
+.bm-tabs button {border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px 14px;color:#0b1f3b;cursor:pointer}
+.bm-tabs button.active {border-color:#2563ff;color:#2563ff;font-weight:700}
+.bm-context {color:#64748b;margin:10px 0}
+.bm-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.bm-card {display:flex;flex-direction:column;gap:10px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;min-width:0}
+.bm-card h3 {font-size:1rem;margin:10px 0 0;color:#0f172a}
+.bm-card p {font-size:.85rem;color:#64748b;margin:4px 0}
+.bm-card strong {font-size:1.5rem;color:#0b1f3b}
+.bm-card strong small {font-size:.85rem;color:#64748b}
+.bm-card>small {color:#64748b}
+.bm-status {font-size:.77rem;border-radius:50px;padding:4px 9px;display:inline-block;font-weight:650}
+.bm-status.normal {background:#dcfce7;color:#166534}
+.bm-status.atencao {background:#fef3c7;color:#92400e}
+.bm-status.critico {background:#fee2e2;color:#991b1b}
+.bm-status.sem_dados,.bm-status.suspenso {background:#e2e8f0;color:#334155}
+.bm-error {padding:12px;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;background:#fff1f2}
+@media(max-width:520px){.bm-tabs button {flex:1 1 100%;text-align:left}.bm-cards{grid-template-columns:1fr}}
+/* P1 admin and process views reuse official Nexora shared shells/components. */
+.bm-row-actions{display:flex;flex-wrap:wrap;gap:8px}
+.bm-row-actions button{min-height:36px}
+@media(max-width:640px){.bm-row-actions button{min-height:44px}}
+
+.bm-glpi-form { display: grid; gap: 12px; max-width: 640px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--border, #d0d7de); border-radius: 8px; }
+.bm-glpi-form h3, .bm-glpi-form p { margin: 0; }
+.bm-glpi-form button { min-height: 44px; justify-self: start; }

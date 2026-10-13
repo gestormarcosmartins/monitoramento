@@ -29,6 +29,9 @@ from .zabbix import ZabbixClient
 from .operations import router as operations_router
 from .benner import router as benner_router
 from .agent_api import router as agent_router
+from .business import router as business_router, agent_router as business_agent_router
+from .business_p1 import router as business_p1_router
+from .business_glpi import router as business_glpi_router
 from .consolidated_tickets import router as consolidated_tickets_router
 from .consolidated_alerts import router as consolidated_alerts_router
 from .consolidated_inventory import assets_router as consolidated_assets_router, monitors_router as consolidated_monitors_router
@@ -65,6 +68,10 @@ install_error_contract(app)
 app.include_router(operations_router)
 app.include_router(benner_router)
 app.include_router(agent_router)
+app.include_router(business_router)
+app.include_router(business_agent_router)
+app.include_router(business_p1_router)
+app.include_router(business_glpi_router)
 # Must precede ticketing_router: "/tickets/consolidated" would otherwise match "/tickets/{ticket_id}".
 app.include_router(consolidated_tickets_router)
 app.include_router(consolidated_alerts_router)
@@ -241,6 +248,12 @@ def create_tenant(payload: TenantCreate, identity: Identity = Depends(current_id
                 (%s,'SLA Alto','high',30,480),(%s,'SLA Crítico','critical',15,240)
                 ON CONFLICT (tenant_id,priority) DO NOTHING""",
                 (tenant["id"],tenant["id"],tenant["id"],tenant["id"]),
+            )
+            # cm_outbox has forced RLS: scope this transaction to the new company before queueing its GLPI entity.
+            connection.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant["id"]),))
+            connection.execute(
+                "INSERT INTO cm_outbox(tenant_id,topic,payload) VALUES (%s,'tenant.created',%s)",
+                (tenant["id"], Jsonb({"tenant_id": str(tenant["id"])})),
             )
             connection.execute(
                 "INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'create','tenant',%s)",

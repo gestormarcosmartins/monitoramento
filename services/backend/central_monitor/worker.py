@@ -232,7 +232,9 @@ def sync_incident(tenant_id: str, incident_id: str) -> None:
     client = GlpiClient()
     ticket_id = incident["glpi_ticket_id"]
     if ticket_id is None:
-        ticket_id = client.create_ticket(incident)
+        # Ticket belongs to the company that raised the alert; never open one without its entity.
+        from .glpi_entities import ensure_tenant_entity
+        ticket_id = client.create_ticket({**incident, "glpi_entity_id": ensure_tenant_entity(tenant_id, client)})
     client.update_ticket_status(int(ticket_id), incident["status"])
     with tenant_connection(tenant_id) as connection:
         connection.execute(
@@ -443,6 +445,12 @@ def process_outbox() -> None:
                 sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
             elif row["topic"] == "incident.comment_created":
                 sync_incident_comment(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["comment_id"])
+            elif row["topic"] == "tenant.created":
+                from .glpi_entities import ensure_tenant_entity
+                ensure_tenant_entity(str(row["tenant_id"]))
+            elif row["topic"] == "business.occurrence.glpi":
+                from .business_glpi import sync_occurrence
+                sync_occurrence(str(row["tenant_id"]),row["payload"]["occurrence_id"],row["payload"]["event"])
             elif row["topic"] == "notification.requested":
                 deliver_notifications(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["event"])
             elif row["topic"] == "monitor.created":
@@ -510,7 +518,20 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     logger.info("worker_started")
+    next_business_eval=0.0
     while running:
+        if time.monotonic() >= next_business_eval:
+            try:
+                from .business_evaluation import evaluate_business_tenants
+                evaluate_business_tenants(connect,tenant_connection)
+            except Exception:
+                logger.exception('business_worker_failed')
+            try:
+                from .business_glpi import reconcile_tickets
+                reconcile_tickets(connect)
+            except Exception:
+                logger.exception('business_glpi_reconcile_cycle_failed')
+            next_business_eval=time.monotonic()+60
         process_outbox()
         reconcile_glpi_tickets()
         process_obligation_escalations()

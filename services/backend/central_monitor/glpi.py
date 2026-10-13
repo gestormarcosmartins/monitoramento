@@ -28,13 +28,22 @@ class GlpiClient:
             raise RuntimeError("GLPI credentials are not configured")
         response = httpx.get(f"{self.url}/initSession", headers=headers, auth=auth, timeout=15)
         response.raise_for_status()
-        return response.json()["session_token"]
+        token = response.json()["session_token"]
+        # Company tickets live in per-company child entities: the session must see all of them.
+        try:
+            httpx.post(f"{self.url}/changeActiveEntities", headers={**self._base_headers(), "Session-Token": token},
+                       json={"entities_id": "all", "is_recursive": True}, timeout=15)
+        except httpx.HTTPError:
+            pass
+        return token
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None,
+                 params: dict[str, Any] | None = None) -> Any:
         token = self._session()
         headers = {**self._base_headers(), "Session-Token": token}
         try:
-            response = httpx.request(method, f"{self.url}/{path.lstrip('/')}", headers=headers, json=payload, timeout=15)
+            response = httpx.request(method, f"{self.url}/{path.lstrip('/')}", headers=headers, json=payload,
+                                     params=params, timeout=15)
             response.raise_for_status()
             return response.json() if response.content else None
         finally:
@@ -50,7 +59,80 @@ class GlpiClient:
             f"Incidente Nexora: {incident['id']}\n"
             f"Detalhes: {incident.get('message') or incident['title']}"
         )
-        result = self._request("POST", "Ticket", {"input": {"name": incident["title"], "content": content, "status": 1, "urgency": priority, "impact": priority, "priority": priority}})
+        ticket = {"name": incident["title"], "content": content, "status": 1, "urgency": priority, "impact": priority, "priority": priority}
+        if incident.get("glpi_entity_id"):
+            ticket["entities_id"] = int(incident["glpi_entity_id"])
+        result = self._request("POST", "Ticket", {"input": ticket})
+        return int(result["id"])
+
+    def find_entity(self, tenant_id: str, name: str) -> int | None:
+        """Entity previously created for this company: matched by the Nexora tenant id kept in the comment."""
+        found = self._request("GET", "Entity", None, {"searchText[name]": name.split(" (")[0], "range": "0-200"})
+        for item in found if isinstance(found, list) else []:
+            if f"nexora-tenant:{tenant_id}" in (item.get("comment") or ""):
+                return int(item["id"])
+        return None
+
+    def create_entity(self, tenant_id: str, name: str) -> int:
+        existing = self._request("GET", "Entity", None, {"searchText[name]": name, "range": "0-200"})
+        taken = any(item.get("name") == name for item in existing) if isinstance(existing, list) else False
+        # GLPI entity names are unique under their parent: disambiguate instead of failing.
+        final_name = f"{name} ({tenant_id[:8]})" if taken else name
+        result = self._request("POST", "Entity", {"input": {
+            "name": final_name, "entities_id": 0,
+            "comment": f"Empresa do Nexora. nexora-tenant:{tenant_id}"}})
+        return int(result["id"])
+
+    BUSINESS_CATEGORY = "Negócio"
+    _category_cache: dict[str, int] = {}
+
+    def ensure_category(self, name: str = BUSINESS_CATEGORY) -> int:
+        """Return the id of the ITIL category, creating it once if GLPI does not have it."""
+        if name in self._category_cache:
+            return self._category_cache[name]
+        found = self._request("GET", "ITILCategory", None, {"searchText[name]": name, "range": "0-200"})
+        for item in found if isinstance(found, list) else []:
+            if item.get("name") == name:
+                self._category_cache[name] = int(item["id"])
+                return int(item["id"])
+        result = self._request("POST", "ITILCategory", {"input": {
+            "name": name, "entities_id": 0, "is_recursive": 1,  # root + recursive: usable by every company entity
+            "is_helpdeskvisible": 1, "is_incident": 1, "is_request": 1,
+            "comment": "Chamados originados pelo Nexora Business Monitor (processos e indicadores de negócio).",
+        }})
+        self._category_cache[name] = int(result["id"])
+        return int(result["id"])
+
+    def find_ticket_by_marker(self, marker: str) -> int | None:
+        """Idempotency: a retry after a lost response must not open a second ticket."""
+        found = self._request("GET", "search/Ticket", None, {
+            "criteria[0][field]": 1, "criteria[0][searchtype]": "contains", "criteria[0][value]": marker,
+            "forcedisplay[0]": 2, "range": "0-1"})
+        rows = found.get("data") if isinstance(found, dict) else None
+        return int(rows[0]["2"]) if rows else None
+
+    def create_business_ticket(self, occurrence: dict[str, Any]) -> int:
+        marker = occurrence["marker"]
+        existing = self.find_ticket_by_marker(marker)
+        if existing:
+            return existing
+        level = 5 if occurrence["severity"] == "critico" else 3
+        content = (
+            "Ocorrência de negócio aberta automaticamente pelo Nexora Business Monitor.\n"
+            f"Empresa: {occurrence['tenant_name']}\n"
+            f"Indicador: {occurrence['indicator_name']} ({occurrence['indicator_code']})\n"
+            f"Severidade: {occurrence['severity']}\n"
+            f"Ocorrência Nexora: {occurrence['id']}\n"
+            "Valores e detalhes do negócio permanecem no Nexora, visíveis apenas a usuários autorizados."
+        )
+        ticket = {
+            "name": f"[Negócio] {occurrence['indicator_name']} - {marker}", "content": content, "type": 1,
+            "status": 1, "urgency": level, "impact": level, "priority": level,
+            "itilcategories_id": self.ensure_category(),
+        }
+        if occurrence.get("glpi_entity_id"):
+            ticket["entities_id"] = int(occurrence["glpi_entity_id"])
+        result = self._request("POST", "Ticket", {"input": ticket})
         return int(result["id"])
 
     def update_ticket_status(self, ticket_id: int, status: str) -> None:
