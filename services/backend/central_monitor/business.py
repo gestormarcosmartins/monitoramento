@@ -152,15 +152,6 @@ class EnableChange(BaseModel):
     reason: str = Field(min_length=4, max_length=500)
 
 
-class AgentBinding(BaseModel):
-    agent_id: UUID
-    indicator_id: UUID
-    schema_name: str = Field(default="dbo", pattern=r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
-    view_name: str = Field(pattern=r"^vw_nexora_[A-Za-z0-9_]{1,80}$")
-    value_column: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
-    poll_seconds: int = Field(default=300, ge=60, le=86400)
-
-
 class BusinessSample(BaseModel):
     indicator_id: UUID
     event_id: str = Field(min_length=6, max_length=160)
@@ -381,31 +372,11 @@ def occurrence_action(occurrence_id:UUID,payload:OccurrenceAction,tenant_id:str=
     return {"id":occurrence_id,"state":new_state}
 
 
-@router.post("/agent-bindings", status_code=201)
-def bind_agent(payload:AgentBinding,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
+@router.post("/agent-bindings", status_code=410)
+def bind_agent() -> None:
     # Direct binding skipped the maker-checker publication flow (author cannot self-approve).
-    raise HTTPException(410,"Use /collectors and publish a reviewed revision instead")
-    actor,scope=_require(identity,tenant_id,"business.source.manage")
-    with tenant_connection(tenant_id) as db:
-        agent=db.execute("SELECT id,configuration FROM cm_agents WHERE tenant_id=%s AND id=%s AND status<>'disabled' FOR UPDATE",
-                         (tenant_id,payload.agent_id)).fetchone()
-        if not agent: raise HTTPException(404,'Agent not found')
-        indicator=db.execute("SELECT * FROM cm_business_indicators WHERE tenant_id=%s AND id=%s AND active",
-                             (tenant_id,payload.indicator_id)).fetchone()
-        if not indicator or not _scope_allows(indicator,actor,scope): raise HTTPException(404,'Indicator not found')
-        config=dict(agent['configuration'] or {})
-        jobs=[x for x in config.get('business_collectors',[]) if str(x.get('indicator_id'))!=str(payload.indicator_id)]
-        jobs.append({'indicator_id':str(payload.indicator_id),'kind':'sql_view','schema':payload.schema_name,
-                     'view':payload.view_name,'column':payload.value_column,'poll_seconds':payload.poll_seconds})
-        config['business_collectors']=jobs
-        db.execute("UPDATE cm_agents SET configuration=%s,updated_at=now() WHERE tenant_id=%s AND id=%s",
-                   (Jsonb(config),tenant_id,payload.agent_id))
-        db.execute("""INSERT INTO cm_business_agent_bindings(tenant_id,agent_id,indicator_id,created_by)
-             VALUES (%s,%s,%s,%s) ON CONFLICT (tenant_id,agent_id,indicator_id) DO UPDATE SET active=true""",
-             (tenant_id,payload.agent_id,payload.indicator_id,actor['id']))
-        db.execute("INSERT INTO cm_audit_log(tenant_id,user_id,action,object_type,object_id) VALUES (%s,%s,'bind_agent','business_indicator',%s)",
-                   (tenant_id,actor['id'],str(payload.indicator_id)))
-    return {'status':'configured','agent_id':payload.agent_id,'indicator_id':payload.indicator_id}
+    # Superseded by POST /collectors + POST /collectors/{id}/publish in business_p1.py.
+    raise HTTPException(410, "Use /collectors and publish a reviewed revision instead")
 
 
 def _digest(sample:BusinessSample)->str:
