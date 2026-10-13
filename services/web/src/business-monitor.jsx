@@ -9,7 +9,56 @@ const statusLabels = {normal:'Normal',atencao:'Atenção',critico:'Crítico',sem
 const routeName = () => window.location.pathname.split('/')[2] || 'visao-geral';
 const has = (perms, cap) => perms.includes(cap);
 
-export default function BusinessMonitor({tenantId, request, access, ui}) {
+/** Master-only bootstrap: no screen can be reachable before this, since the UI itself
+ * requires a grant to render (no implicit access, not even for the technical Master). */
+function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState('');
+  const [users,setUsers]=useState([]);
+  useEffect(()=>{ if(access.enabled) request('/api/v1/users').then(setUsers).catch(()=>setUsers([])); },[access.enabled,tenantId]);
+  if (!isMaster) return <div className="panel"><h2>Acesso não autorizado</h2><p>Este usuário não possui concessão para Monitoramento de Negócios nesta Empresa.</p></div>;
+  const enable=async(event)=>{
+    event.preventDefault();setBusy(true);setMessage('');
+    const reason=new FormData(event.currentTarget).get('reason');
+    try{ await request('/api/v1/business/enable',{method:'PUT',body:JSON.stringify({enabled:true,reason})}); await onDone(); }
+    catch(e){setMessage(e.message||'Falha ao ativar');}finally{setBusy(false);}
+  };
+  const grant=async(event)=>{
+    event.preventDefault();setBusy(true);setMessage('');
+    const form=new FormData(event.currentTarget);
+    try{
+      await request('/api/v1/business/grants',{method:'PUT',body:JSON.stringify({
+        user_id:form.get('user_id'),capability:'business.grants.manage',scope_type:'company',
+        active:true,reason:form.get('reason')})});
+      await onDone();
+    }catch(e){setMessage(e.message||'Falha ao conceder acesso');}finally{setBusy(false);}
+  };
+  return <section className="panel">
+    <h2>Ativação do Monitoramento de Negócios</h2>
+    <p>Produto independente, sem acesso implícito: o Master técnico pode ativar e indicar o primeiro administrador, mas não pode conceder acesso a si mesmo.</p>
+    {message && <div role="alert" className="bm-error">{message}</div>}
+    {!access.enabled ? (
+      <form className="nexora-form" onSubmit={enable}>
+        <label className="field"><span>Motivo da ativação</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: piloto comercial aprovado"/></label>
+        <div className="form-actions"><button className="primary" disabled={busy}>{busy?'Ativando...':'Ativar para esta Empresa'}</button></div>
+      </form>
+    ) : (
+      <>
+        <p className="info-banner">Produto já ativado para esta Empresa. Indique um usuário para ser o primeiro administrador de negócios (ele poderá conceder acesso a outros, inclusive a você).</p>
+        <form className="nexora-form" onSubmit={grant}>
+          <label className="field"><span>Usuário</span><select name="user_id" required defaultValue="">
+            <option value="" disabled>Selecione</option>
+            {users.map(u=><option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
+          </select></label>
+          <label className="field"><span>Motivo</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: responsável pelo módulo de negócios"/></label>
+          <div className="form-actions"><button className="primary" disabled={busy || !users.length}>{busy?'Concedendo...':'Conceder administração de negócios'}</button></div>
+        </form>
+      </>
+    )}
+  </section>;
+}
+
+export default function BusinessMonitor({tenantId, request, access, isMaster, onAccessChange, ui}) {
   const {PageHeader, MetricGroup, ListPage, FilterBar, DataGrid, FormPage, FormSection, FormActions} = ui;
   const [page, setPage] = useState(routeName());
   const [indicators,setIndicators]=useState([]);
@@ -43,7 +92,8 @@ export default function BusinessMonitor({tenantId, request, access, ui}) {
     else {sequence.current++;setIndicators([]);setHealth(null);setOccurrences([]);} },[tenantId,access.capabilities?.join('|')]);
   useEffect(() => {const pop=()=>setPage(routeName());window.addEventListener('popstate',pop);return ()=>window.removeEventListener('popstate',pop);},[]);
   const allowed=access.capabilities||[];
-  if (!access.enabled || !has(allowed,'business.view')) return <div className="panel"><h2>Acesso não autorizado</h2><p>Este usuário não possui concessão para Monitoramento de Negócios nesta Empresa.</p></div>;
+  if (!access.enabled || !has(allowed,'business.view'))
+    return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} onDone={onAccessChange} />;
   const openNew=()=>{setEditing(null);navigate('monitoramentos/novo');};
   const openEdit=(i)=>{setEditing(i);navigate(`monitoramentos/${i.id}/editar`);};
   const editId=window.location.pathname.match(/^\/negocios\/monitoramentos\/([^/]+)\/editar$/)?.[1];
