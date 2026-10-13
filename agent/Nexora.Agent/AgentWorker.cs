@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Nexora.Agent.Benner;
 
 namespace Nexora.Agent;
 
@@ -10,12 +11,14 @@ public sealed class AgentWorker : BackgroundService
     private readonly ILogger<AgentWorker> _logger;
     private readonly HostCollector _host;
     private readonly SqlServerCollector _sql;
+    private readonly IBennerEngineDiagnostics _benner;
 #if CHAVEOU_AGENT
     private readonly ChaveouMonitorCollector _chaveou;
 #endif
     private readonly HashSet<string> _processed = new(StringComparer.OrdinalIgnoreCase);
 
     public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql,
+        IBennerEngineDiagnostics benner,
 #if CHAVEOU_AGENT
         ChaveouMonitorCollector chaveou,
 #endif
@@ -26,6 +29,7 @@ public sealed class AgentWorker : BackgroundService
         _options = options.Value;
         _host = host;
         _sql = sql;
+        _benner = benner;
 #if CHAVEOU_AGENT
         _chaveou = chaveou;
 #endif
@@ -34,7 +38,7 @@ public sealed class AgentWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        DateTimeOffset nextServices=DateTimeOffset.MinValue,nextHost=DateTimeOffset.MinValue,nextSql=DateTimeOffset.MinValue,nextPerformance=DateTimeOffset.MinValue;
+        DateTimeOffset nextServices=DateTimeOffset.MinValue,nextHost=DateTimeOffset.MinValue,nextSql=DateTimeOffset.MinValue,nextPerformance=DateTimeOffset.MinValue,nextBenner=DateTimeOffset.MinValue;
 #if CHAVEOU_AGENT
         DateTimeOffset nextChaveou=DateTimeOffset.MinValue,nextChaveouPerformance=DateTimeOffset.MinValue;
 #endif
@@ -50,6 +54,7 @@ public sealed class AgentWorker : BackgroundService
                 if(now>=nextHost){foreach(var pair in _host.Metrics())health[pair.Key]=pair.Value;var hostSnapshot=_host.Operational(config,_options.EssentialServices,_options.AgentName);if(hostSnapshot is not null)await _queue.EnqueueAsync(hostSnapshot,stoppingToken);nextHost=now.AddSeconds(Math.Max(60,_options.HostMetricsSeconds));}
                 if(now>=nextSql){health["sql"]=await _sql.HealthAsync(stoppingToken);var snapshot=await _sql.OperationalAsync(config,stoppingToken);if(snapshot is not null)await _queue.EnqueueAsync(snapshot,stoppingToken);nextSql=now.AddSeconds(Math.Max(60,_options.SqlHealthSeconds));}
                 if(now>=nextPerformance){var snapshot=await _sql.PerformanceAsync(config,stoppingToken);if(snapshot is not null)await _queue.EnqueueAsync(snapshot,stoppingToken);nextPerformance=now.AddSeconds(Math.Max(900,_options.SqlPerformanceSeconds));}
+                if(_options.BennerEnabled && now>=nextBenner){await BennerCycleAsync(stoppingToken);nextBenner=now.AddSeconds(Math.Max(300,_options.BennerIntervalSeconds));}
 #if CHAVEOU_AGENT
                 if(now>=nextChaveou)
                 {
@@ -103,6 +108,67 @@ public sealed class AgentWorker : BackgroundService
             if (snapshot is null) { _queue.Complete(file); continue; }
             await _central.SendAsync(snapshot, cancellationToken);
             _queue.Complete(file);
+        }
+    }
+
+    // The Benner health-monitor push (see Benner/BennerSqlServerDiagnostics.cs) deliberately
+    // bypasses LocalQueue/SnapshotEnvelope/the monitor-matching pipeline above: it has its own
+    // auth scheme (shared ingest token + tenant id, not this agent's enrollment credentials),
+    // its own endpoint, and a payload shape Nexora's /agents/benner/snapshots consumes directly.
+    // A failed send is spooled to its own small disk queue (BennerPendingDirectory) so a network
+    // outage doesn't lose a collection - mirrors the Python collector's "local archive survives
+    // network failure" behavior - without disturbing LocalQueue's own retry bookkeeping.
+    private string BennerPendingDirectory => Path.Combine(AgentPaths.DataDirectory(_options), "benner", "pending");
+
+    private async Task BennerCycleAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = await _benner.CollectAsync(cancellationToken);
+            if (payload is not null)
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                if (!await _central.SendBennerSnapshotJsonAsync(json, cancellationToken))
+                {
+                    await BennerSpoolAsync(json, cancellationToken);
+                    _logger.LogWarning("Não foi possível enviar o diagnóstico Benner (execution_id={ExecutionId}); mantido na fila local.", payload.ExecutionId);
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            _logger.LogError(error, "Falha no ciclo de diagnóstico Benner.");
+        }
+        await BennerFlushPendingAsync(cancellationToken);
+    }
+
+    private async Task BennerSpoolAsync(string payloadJson, CancellationToken cancellationToken)
+    {
+        var directory = BennerPendingDirectory;
+        Directory.CreateDirectory(directory);
+        var final = Path.Combine(directory, $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.json");
+        var temporary = final + ".tmp";
+        await File.WriteAllTextAsync(temporary, payloadJson, cancellationToken);
+        File.Move(temporary, final);
+    }
+
+    private async Task BennerFlushPendingAsync(CancellationToken cancellationToken)
+    {
+        var directory = BennerPendingDirectory;
+        if (!Directory.Exists(directory)) return;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.json").OrderBy(x => x))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(file, cancellationToken);
+                if (await _central.SendBennerSnapshotJsonAsync(json, cancellationToken)) File.Delete(file);
+                else break; // Still unreachable/misconfigured: stop and retry the whole batch next cycle.
+            }
+            catch (Exception error)
+            {
+                _logger.LogWarning(error, "Falha ao reenviar diagnóstico Benner pendente {File}.", file);
+                break;
+            }
         }
     }
 }

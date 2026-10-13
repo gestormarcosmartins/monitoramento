@@ -1,4 +1,5 @@
 using Nexora.Agent;
+using Nexora.Agent.Benner;
 
 var builder = Host.CreateApplicationBuilder(args);
 // Nexora.Agent.Config writes the settings a human edits to agentsettings.json next to
@@ -34,6 +35,7 @@ builder.Services.AddSingleton<CredentialStore>();
 builder.Services.AddSingleton<SqlCredentialStore>();
 builder.Services.AddSingleton<HostCollector>();
 builder.Services.AddSingleton<SqlServerCollector>();
+builder.Services.AddSingleton<IBennerEngineDiagnostics, BennerSqlServerDiagnostics>();
 builder.Services.AddSingleton<LocalQueue>();
 #if CHAVEOU_AGENT
 builder.Services.AddSingleton<ChaveouMonitorCollector>();

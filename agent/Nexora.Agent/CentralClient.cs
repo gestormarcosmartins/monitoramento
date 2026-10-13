@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 namespace Nexora.Agent;
@@ -83,4 +84,28 @@ public sealed class CentralClient
         using var response = await _http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
+
+    // Dedicated path for the Benner health-monitor port (see Benner/BennerSqlServerDiagnostics.cs
+    // and AgentWorker's Benner cycle): this endpoint is authenticated with a shared ingest token
+    // + tenant id (X-Tenant-ID / X-Agent-Token), NOT this agent's enrollment Credentials, so it
+    // deliberately does not go through Authorized()/the usual EnsureSuccessStatusCode() pattern -
+    // the caller decides what to do with a false result (e.g. spool to disk and retry later).
+    // Accepts pre-serialized JSON so a spooled/retried payload can be replayed without a
+    // deserialize-then-reserialize round trip.
+    public async Task<bool> SendBennerSnapshotJsonAsync(string payloadJson, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.BennerTenantId) || string.IsNullOrWhiteSpace(_options.BennerIngestToken))
+            return false; // Not configured: mirrors Python's "desativado" skip (local archive still written, nothing sent).
+        using var request = new HttpRequestMessage(HttpMethod.Post, Uri("api/v1/agents/benner/snapshots?activate_alerts=true"))
+        {
+            Content = new StringContent(payloadJson, System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Tenant-ID", _options.BennerTenantId);
+        request.Headers.Add("X-Agent-Token", _options.BennerIngestToken);
+        using var response = await _http.SendAsync(request, cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    public Task<bool> SendBennerSnapshotAsync(Benner.BennerSnapshotPayload payload, CancellationToken cancellationToken) =>
+        SendBennerSnapshotJsonAsync(JsonSerializer.Serialize(payload), cancellationToken);
 }
