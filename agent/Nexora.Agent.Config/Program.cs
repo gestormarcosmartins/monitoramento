@@ -47,6 +47,16 @@ internal sealed class ConfigurationForm : Form
     private readonly CheckBox _sqlEncrypt = new() { Text = "Criptografar conexão", Checked = true, AutoSize = true };
     private readonly CheckBox _trustCertificate = new() { Text = "Confiar no certificado do servidor", Checked = true, AutoSize = true };
     private readonly Button _testSql = new() { Text = "Testar conexão SQL", AutoSize = true };
+    // Shared ingest credentials for the Benner diagnostic push (see Nexora.Agent/Benner/): a
+    // single token/tenant used by every agent that enables this feature, not a per-agent
+    // enrollment credential. Deliberately left blank here (never hardcoded in source - this
+    // app ships to client machines and its binary/source are not a safe place for a live
+    // secret) - whoever installs the agent pastes the current shared token in, same as the
+    // SQL password field below.
+    private readonly CheckBox _bennerEnabled = new() { Text = "Habilitar diagnóstico avançado Benner (19 checks de saúde do SQL Server)", AutoSize = true };
+    private readonly NumericUpDown _bennerInterval = new() { Minimum = 300, Maximum = 86400, Value = 1800 };
+    private readonly TextBox _bennerIngestToken = new() { UseSystemPasswordChar = true };
+    private readonly TextBox _bennerTenantId = new();
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
@@ -54,6 +64,10 @@ internal sealed class ConfigurationForm : Form
     // field is left blank on a later save — e.g. reopening just to tweak the interval —
     // we must keep whatever token is already on disk instead of overwriting it with "".
     private string _existingToken = "";
+    // Same masked-field preservation pattern as _existingToken: the ingest token box is
+    // never pre-filled with the real secret, so leaving it blank on save must keep whatever
+    // is already on disk instead of wiping it out.
+    private string _existingBennerIngestToken = "";
 
     public ConfigurationForm()
     {
@@ -104,6 +118,10 @@ internal sealed class ConfigurationForm : Form
         Add(sqlGrid, "Desempenho SQL (segundos)", _sqlPerformanceSeconds, "Padrão: 21600 segundos (6 horas). Nunca executado a cada heartbeat.");
         Add(sqlGrid, "Validação", _testSql, "Valida autenticação, servidor e banco antes da instalação.");
         _testSql.Click += async (_, _) => await TestSqlAsync();
+        Add(sqlGrid, "Diagnóstico Benner", _bennerEnabled, "Porta os 19 checks de saúde do SQL Server (bloqueios, backups, I/O, tempdb, etc.) para o painel \"Diagnóstico\" do Nexora. Exige Monitor SQL habilitado.");
+        Add(sqlGrid, "Intervalo Benner (segundos)", _bennerInterval, "Padrão: 1800 segundos (30 minutos), igual ao coletor original.");
+        Add(sqlGrid, "Token de ingestão Benner", _bennerIngestToken, "Token compartilhado (não é o token de cadastro do agente). Deixe em branco para manter o valor já salvo nesta máquina.");
+        Add(sqlGrid, "Tenant Benner", _bennerTenantId, "GUID do tenant Nexora que recebe os diagnósticos.");
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(18, 12, 18, 10), BackColor = Color.WhiteSmoke };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -155,6 +173,10 @@ internal sealed class ConfigurationForm : Form
             _sqlServer.Text = String(agent, "SqlServer", _sqlServer.Text); _sqlDatabase.Text = String(agent, "SqlDatabase", _sqlDatabase.Text); _sqlUser.Text = String(agent, "SqlUser", "");
             _sqlEnabled.Checked = Boolean(agent,"SqlEnabled",true); _integrated.Checked=Boolean(agent,"SqlIntegratedSecurity",false); _sqlEncrypt.Checked=Boolean(agent,"SqlEncrypt",true); _trustCertificate.Checked=Boolean(agent,"SqlTrustServerCertificate",true);
             if(agent.TryGetProperty("EssentialServices",out var serviceList)&&serviceList.ValueKind==JsonValueKind.Array)_services.Text=string.Join(", ",serviceList.EnumerateArray().Select(x=>x.GetString()).Where(x=>!string.IsNullOrWhiteSpace(x)));
+            _bennerEnabled.Checked = Boolean(agent, "BennerEnabled", false);
+            _bennerInterval.Value = Number(agent, "BennerIntervalSeconds", 1800, _bennerInterval.Minimum, _bennerInterval.Maximum);
+            _existingBennerIngestToken = String(agent, "BennerIngestToken", "");
+            _bennerTenantId.Text = String(agent, "BennerTenantId", "");
             _status.Text = "Configuração instalada carregada.";
         }
         catch (Exception error) { _status.Text = $"Não foi possível ler a configuração atual: {error.Message}"; }
@@ -270,7 +292,13 @@ internal sealed class ConfigurationForm : Form
                     SqlHealthSeconds=(int)_sqlHealthSeconds.Value,SqlPerformanceSeconds=(int)_sqlPerformanceSeconds.Value,
                     EssentialServices=_services.Text.Split(',',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries),
                     SqlEnabled=EffectiveSqlEnabled,SqlServer=_sqlServer.Text.Trim(),SqlDatabase=_sqlDatabase.Text.Trim(),SqlIntegratedSecurity=_integrated.Checked,
-                    SqlUser=_sqlUser.Text.Trim(),SqlEncrypt=_sqlEncrypt.Checked,SqlTrustServerCertificate=_trustCertificate.Checked,SqlCommandTimeoutSeconds=30
+                    SqlUser=_sqlUser.Text.Trim(),SqlEncrypt=_sqlEncrypt.Checked,SqlTrustServerCertificate=_trustCertificate.Checked,SqlCommandTimeoutSeconds=30,
+                    // Benner only ever makes sense alongside SQL monitoring - a checked box with
+                    // no SQL Server configured would just fail every check, so it rides on the
+                    // same effective-enabled gate rather than its own independent condition.
+                    BennerEnabled=EffectiveSqlEnabled&&_bennerEnabled.Checked,BennerIntervalSeconds=(int)_bennerInterval.Value,
+                    BennerIngestToken=string.IsNullOrWhiteSpace(_bennerIngestToken.Text)?_existingBennerIngestToken:_bennerIngestToken.Text.Trim(),
+                    BennerTenantId=_bennerTenantId.Text.Trim()
                 }
             };
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
