@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
     vapid_subject: str = Field(default="mailto:noreply@nexora.local", alias="VAPID_SUBJECT")
     benner_ingest_token: str = Field(default="", alias="BENNER_INGEST_TOKEN")
+    # Expo push (mobile). The token key is a Fernet key; allowed project ids block cross-project tokens.
+    push_token_key: str = Field(default="", alias="PUSH_TOKEN_KEY")
+    expo_project_ids: str = Field(default="", alias="EXPO_PROJECT_IDS")
+    expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
+    expo_push_url: str = Field(default="https://exp.host/--/api/v2/push", alias="EXPO_PUSH_URL")
+    expo_receipt_delay_seconds: int = Field(default=900, ge=60, alias="EXPO_RECEIPT_DELAY_SECONDS")
 
 
 @lru_cache

@@ -61,6 +61,15 @@ def _notify(db:Any,tenant_id:str,indicator:dict[str,Any],occurrence_id:Any,sever
            OR (g.scope_type='process' AND g.scope_id=%s))
         GROUP BY sub.user_id''',(tenant_id,indicator['id'],indicator['owner_user_id'],
             indicator.get('unit_id'),indicator.get('department_id'),indicator.get('process_id'))).fetchall()
+    if recipients:
+        # Mobile push: same audience as the in-app notice, generic text (no values on the lock screen).
+        from .expo_push import enqueue_notification
+        enqueue_notification(db,tenant_id,domain='BUSINESS',source_type='business_occurrence',
+            source_id=str(occurrence_id),event_key=f'business-occurrence:{occurrence_id}:opened',
+            severity='high' if severity=='critico' else 'medium',category='business_indicator',
+            title='Ocorrência de negócio',body='Há uma ocorrência que exige atenção. Abra o Nexora.',
+            action_type='business_occurrence',action_ref=str(occurrence_id),
+            recipients=[r['user_id'] for r in recipients])
     for recipient in recipients:
         db.execute('''INSERT INTO cm_business_notifications
            (tenant_id,recipient_user_id,occurrence_id,title,message)

@@ -533,6 +533,11 @@ def main() -> None:
                 logger.exception('business_glpi_reconcile_cycle_failed')
             next_business_eval=time.monotonic()+60
         process_outbox()
+        try:
+            from .expo_push import process_expo_pushes
+            process_expo_pushes()
+        except Exception:
+            logger.exception('expo_push_cycle_failed')
         reconcile_glpi_tickets()
         process_obligation_escalations()
         run_monitors()
