@@ -520,8 +520,9 @@ const actionIconName = (label) => {
   const value = label.toLocaleLowerCase("pt-BR");
   if (value.includes("editar")) return "edit";
   if (value.includes("visualizar") || value.includes("detalhe")) return "view";
-  if (value.includes("excluir") || value.includes("remover")) return "trash";
-  if (value.includes("inativar") || value.includes("ignorar") || value.includes("desativar")) return "pause";
+  if (value.includes("excluir") || value.includes("remover") || value.includes("revogar") || value.includes("descartar")) return "trash";
+  if (value.includes("inativar") || value.includes("ignorar") || value.includes("desativar") || value.includes("suspender")) return "pause";
+  if (value.includes("retomar") || value.includes("testar") || value.includes("reprocessar")) return "play";
   if (value.includes("ativar") || value.includes("reativar") || value.includes("atender") || value.includes("executar")) return "play";
   if (value.includes("publicar")) return "play";
   if (value.includes("revisar")) return "edit";

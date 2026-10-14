@@ -491,7 +491,7 @@ def eligible_users(tenant_id:str=Depends(tenant_header),identity:Identity=Depend
     actor=_actor(identity,tenant_id)
     with tenant_connection(tenant_id) as db:
         _require_grant_admin(db,tenant_id,actor)
-        return list(db.execute("""SELECT DISTINCT u.id,u.display_name,u.email FROM cm_users u
+        return list(db.execute("""SELECT DISTINCT u.id,u.display_name,u.email,u.is_master FROM cm_users u
             JOIN cm_access_grants g ON g.user_id=u.id
             WHERE g.tenant_id=%s AND g.active AND u.active
              AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())

@@ -140,6 +140,8 @@ class PostgresFlows(unittest.TestCase):
         monitors = bg.list_monitors_for_master(self.A, self.master_ident)
         mine = next(m for m in monitors if str(m["id"]) == str(monitor["id"]))
         self.assertEqual((mine["status"], mine["published_revision"], mine["dialect"]), ("ACTIVE", 1, "sqlserver"))
+        catalogue = bg.list_indicators_for_master(self.A, self.master_ident)
+        self.assertTrue(any(i["has_monitor"] for i in catalogue) and all("last_value" not in i for i in catalogue))
         detail = bg.monitor_revisions(monitor["id"], self.A, self.master_ident)
         revision = detail["revisions"][0]
         self.assertEqual((revision["state"], revision["test_state"]), ("PUBLISHED", "SUCCEEDED"))

@@ -34,6 +34,16 @@ def list_workers_for_master(tenant_id: str = Depends(tenant_header), identity: I
             FROM cm_business_workers w WHERE w.tenant_id=%s ORDER BY w.name""", (tenant_id,)).fetchall())
 
 
+@master_router.get("/indicators")
+def list_indicators_for_master(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)):
+    """Indicator catalogue (no values) so the Master can bind a monitor without holding business.view."""
+    _master(identity, tenant_id)
+    with tenant_connection(tenant_id) as db:
+        return list(db.execute("""SELECT i.id,i.code,i.name,i.unit,i.active,
+              EXISTS(SELECT 1 FROM cm_business_monitors m WHERE m.tenant_id=i.tenant_id AND m.indicator_id=i.id) AS has_monitor
+            FROM cm_business_indicators i WHERE i.tenant_id=%s ORDER BY i.name LIMIT 500""", (tenant_id,)).fetchall())
+
+
 @master_router.get("/monitors")
 def list_monitors_for_master(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)):
     _master(identity, tenant_id)
