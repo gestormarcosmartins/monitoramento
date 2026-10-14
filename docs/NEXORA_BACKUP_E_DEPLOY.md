@@ -46,7 +46,7 @@ Passos gerais:
 **Reverter (se algo quebrar):** (a) código: `tar xzf <backup>/arquivos-antes.tar.gz -C /opt/nexora` e `docker compose build api worker web && docker compose up -d api worker web`; (b) banco, **só se a migration causou dano**: as tabelas novas são aditivas e o código antigo as ignora, então normalmente basta reverter o código. Para restaurar de fato: `pg_restore --clean --if-exists -U platform_admin -d central_monitor <backup>/central_monitor.dump`.
 
 ## 4. Estado do ambiente após o deploy de 14/10/2026
-- Migrations aplicadas até a **052**. API em modo `db` (sem RabbitMQ); o serviço `rabbitmq` existe no `compose.yaml`, mas **não foi iniciado** e `RABBITMQ_URL` está vazio.
+- Migrations aplicadas até a **052**. **RabbitMQ ligado em 14/10/2026**: serviço `rabbitmq` ativo (rede privada), `tools/rabbitmq_smoke.py` passou 8/8 contra o broker real, `RABBITMQ_URL` definida no `.env` e API em modo `broker` (ready 200, sem erros nos logs). Para voltar ao modo `db`: esvaziar `RABBITMQ_URL` e `docker compose up -d api worker`.
 - `PUSH_TOKEN_KEY` e `BUSINESS_SIGNING_KEY` geradas no servidor. `EXPO_PROJECT_IDS` vazio: **nenhum aparelho será aceito para push até existir o projeto EAS** (a rota responde 422/503, sem efeito colateral).
 - Nenhum Business Worker, fonte ou monitor foi criado: nada novo roda até o Master configurar.
 - Pendências de higiene: arquivos de `/opt/nexora` com permissão 666/777; disco em ~66% após limpar o cache de build do Docker.
