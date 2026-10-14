@@ -367,12 +367,15 @@ def _allowed_projects() -> set[str]:
 
 @router.post("/dispositivos-push")
 def register_device(payload: DeviceIn, identity: Identity = Depends(current_identity)) -> dict[str, Any]:
-    user = _user(identity)
+    # Validações sem banco primeiro; sem lista de projetos configurada nenhum token é aceito (falha fechada).
+    allowed = _allowed_projects()
+    if not allowed:
+        raise HTTPException(status_code=503, detail="Push não configurado neste ambiente (defina EXPO_PROJECT_IDS)")
+    if payload.expoProjectId not in allowed:
+        raise HTTPException(status_code=403, detail="Projeto Expo não autorizado neste ambiente")
     if not valid_expo_token(payload.expoPushToken):
         raise HTTPException(status_code=422, detail="Token Expo inválido")
-    allowed = _allowed_projects()
-    if allowed and payload.expoProjectId not in allowed:
-        raise HTTPException(status_code=403, detail="Projeto Expo não autorizado neste ambiente")
+    user = _user(identity)
     enabled = payload.permissionStatus == "granted"
     with connect() as connection:
         # troca de token: desativa os anteriores da mesma instalação

@@ -59,3 +59,38 @@ def test_unknown_domain_is_rejected():
         raise AssertionError("domínio inválido deveria falhar")
     except ValueError:
         pass
+
+
+def _payload(project="proj-test-0001", token="ExponentPushToken[abcdefghijklmnop]"):
+    return ep.DeviceIn(expoPushToken=token, platform="android", installationId="inst-12345678", expoProjectId=project)
+
+
+def _with_projects(monkeypatch, value):
+    monkeypatch.setattr(ep, "get_settings", lambda: type("S", (), {"expo_project_ids": value})())
+
+
+def test_register_device_fails_closed_without_configured_projects(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    _with_projects(monkeypatch, "")
+    with pytest.raises(HTTPException) as error:
+        ep.register_device(_payload(), identity=None)
+    assert error.value.status_code == 503
+
+
+def test_register_device_rejects_token_from_another_project(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    _with_projects(monkeypatch, "proj-prod-0001, proj-prod-0002")
+    with pytest.raises(HTTPException) as error:
+        ep.register_device(_payload(project="proj-test-0001"), identity=None)
+    assert error.value.status_code == 403
+
+
+def test_register_device_rejects_web_push_endpoint_as_expo_token(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    _with_projects(monkeypatch, "proj-test-0001")
+    with pytest.raises(HTTPException) as error:
+        ep.register_device(_payload(token="https://fcm.googleapis.com/fcm/send/abcdefghijklmnop"), identity=None)
+    assert error.value.status_code == 422
