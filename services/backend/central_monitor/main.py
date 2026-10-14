@@ -44,6 +44,7 @@ from .governance import router as governance_router
 from .integrations import router as integrations_router
 from .reconciliation import router as reconciliation_router
 from .push import router as push_router
+from .expo_push import router as expo_push_router
 from .app_incident_api import router as app_incident_router
 from .command_bus import canonical_payload_hash
 from .access_scope import incident_scope
@@ -86,6 +87,7 @@ app.include_router(governance_router)
 app.include_router(integrations_router)
 app.include_router(reconciliation_router)
 app.include_router(push_router)
+app.include_router(expo_push_router)
 app.include_router(app_incident_router)
 
 

@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
     monitor_interval_seconds: int = Field(default=30, ge=10, alias="MONITOR_INTERVAL_SECONDS")
     action_execution_enabled: bool = Field(default=False, alias="ACTION_EXECUTION_ENABLED")
+    expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
+    expo_project_ids: str = Field(default="", alias="EXPO_PROJECT_IDS")
     vapid_public_key: str = Field(default="", alias="VAPID_PUBLIC_KEY")
     vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
     vapid_subject: str = Field(default="mailto:noreply@nexora.local", alias="VAPID_SUBJECT")
