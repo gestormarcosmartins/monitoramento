@@ -10,9 +10,9 @@
 #   LOCAL_KEEP      quantos dias manter local (padrão 7)
 #   REMOTE_HOST     máquina de backup (vazio = só local)
 #   REMOTE_USER     usuário SSH remoto
-#   REMOTE_DIR      pasta remota             (ex.: /backups/nexora)
+#   REMOTE_DIR      pasta remota             (com chave restrita (rrsync), use "." = pasta de entrada)
 #   REMOTE_KEY      chave SSH deste servidor para a máquina de backup
-#   REMOTE_KEEP     quantos dias manter remoto (padrão 30)
+#                   (a retenção remota é feita pela própria máquina de backup)
 #
 # Sai com código != 0 se qualquer etapa falhar (o systemd registra a falha) e nunca apaga backups antigos
 # se o backup novo não foi verificado.
@@ -23,7 +23,6 @@ CONF="${NEXORA_BACKUP_CONF:-/etc/nexora-backup.conf}"
 APP_DIR="${APP_DIR:-/opt/nexora}"
 LOCAL_DIR="${LOCAL_DIR:-/home/opc/nexora-backups/daily}"
 LOCAL_KEEP="${LOCAL_KEEP:-7}"
-REMOTE_KEEP="${REMOTE_KEEP:-30}"
 REMOTE_HOST="${REMOTE_HOST:-}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DEST="$LOCAL_DIR/nexora-$STAMP"
@@ -59,16 +58,13 @@ mv "$TMP" "$DEST"
 log "backup local verificado: $(du -sh "$DEST" | cut -f1)"
 
 if [ -n "$REMOTE_HOST" ]; then
-  : "${REMOTE_USER:?defina REMOTE_USER}" "${REMOTE_DIR:?defina REMOTE_DIR}" "${REMOTE_KEY:?defina REMOTE_KEY}"
+  : "${REMOTE_USER:?defina REMOTE_USER}" "${REMOTE_KEY:?defina REMOTE_KEY}"
+  # A chave deste servidor é RESTRITA na máquina de backup (rrsync write-only): ela só consegue enviar arquivos para a
+  # pasta de entrada, sem terminal, sem leitura, sem listar e sem apagar. Por isso não há verificação nem poda remota
+  # a partir daqui: quem confere o manifesto, arquiva e poda é a própria máquina de backup (nexora-backup-intake).
   SSH="ssh -i $REMOTE_KEY -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes"
-  $SSH "$REMOTE_USER@$REMOTE_HOST" "mkdir -p '$REMOTE_DIR' && chmod 700 '$REMOTE_DIR'" || fail "máquina de backup inacessível"
-  rsync -a --partial -e "$SSH" "$DEST" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/" || fail "envio para a máquina de backup"
-  # confere do lado de lá: os mesmos hashes do manifesto
-  $SSH "$REMOTE_USER@$REMOTE_HOST" "cd '$REMOTE_DIR/$(basename "$DEST")' && sha256sum -c manifest.sha256 >/dev/null" \
-    || fail "verificação remota falhou (cópia corrompida)"
-  log "backup remoto verificado em $REMOTE_HOST:$REMOTE_DIR/$(basename "$DEST")"
-  # só poda o remoto depois de a cópia nova ter sido verificada
-  $SSH "$REMOTE_USER@$REMOTE_HOST" "cd '$REMOTE_DIR' && ls -1dt nexora-* 2>/dev/null | tail -n +$((REMOTE_KEEP + 1)) | xargs -r rm -rf" || log "aviso: poda remota falhou"
+  rsync -a --partial --timeout=600 -e "$SSH" "$DEST" "$REMOTE_USER@$REMOTE_HOST:${REMOTE_DIR:-.}/" || fail "envio para a máquina de backup"
+  log "enviado para a máquina de backup (a verificação e o arquivamento acontecem lá, em até ~20 min)"
 fi
 
 # Poda local: mantém os LOCAL_KEEP mais recentes (o novo já foi verificado).

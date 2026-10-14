@@ -3,9 +3,9 @@ APP_DIR=/opt/nexora
 LOCAL_DIR=/home/opc/nexora-backups/daily
 LOCAL_KEEP=7
 
-# Máquina de backup (Oracle free). Deixe REMOTE_HOST vazio para fazer só o backup local.
+# Máquina de backup (Oracle free, rede privada). Deixe REMOTE_HOST vazio para fazer só o backup local.
+# A chave é RESTRITA lá (só envia para a pasta de entrada); retenção e verificação ficam na máquina de backup.
 REMOTE_HOST=
 REMOTE_USER=
-REMOTE_DIR=/backups/nexora
+REMOTE_DIR=.
 REMOTE_KEY=/home/opc/.ssh/nexora_backup_ed25519
-REMOTE_KEEP=30

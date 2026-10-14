@@ -1,0 +1,8 @@
+[Unit]
+Description=Nexora: verificar e arquivar backups recebidos da produção
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nexora-backup-intake.sh
+Nice=10
+IOSchedulingClass=idle
