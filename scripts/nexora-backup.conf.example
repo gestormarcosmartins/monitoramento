@@ -1,0 +1,11 @@
+# Copie para /etc/nexora-backup.conf (root:opc, modo 0640) e ajuste.
+APP_DIR=/opt/nexora
+LOCAL_DIR=/home/opc/nexora-backups/daily
+LOCAL_KEEP=7
+
+# Máquina de backup (Oracle free). Deixe REMOTE_HOST vazio para fazer só o backup local.
+REMOTE_HOST=
+REMOTE_USER=
+REMOTE_DIR=/backups/nexora
+REMOTE_KEY=/home/opc/.ssh/nexora_backup_ed25519
+REMOTE_KEEP=30
