@@ -1253,7 +1253,7 @@ function App() {
     // The Master technical user has no implicit Business access, but must still be able to
     // reach the bootstrap screen (activate the product, designate the first administrator) —
     // otherwise nobody could ever turn the product on through the UI.
-    if (candidate === "business") return isMaster || (businessAccess.enabled && businessAccess.capabilities?.includes("business.view"));
+    if (candidate === "business") return isMaster || (businessAccess.enabled && (businessAccess.capabilities?.includes("business.view") || businessAccess.capabilities?.includes("business.grants.manage")));
     if (candidate === "overview") return true;
     if (!featureEnabled(`view:${candidate}`)) return false;
     const required = viewPermissionRequirements[candidate];

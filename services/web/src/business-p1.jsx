@@ -30,7 +30,7 @@ export default function BusinessP1({page,tenantId,access,request,ui}){
       const extras=[];
       if(['regras','conectores','notificacoes','relatorios'].includes(page))extras.push(call.current('/api/v1/business/indicators'));
       else extras.push(Promise.resolve([]));
-      if(['processos','conectores','permissoes'].includes(page))extras.push(call.current('/api/v1/business/units'));
+      if(['processos','conectores','permissoes'].includes(page))extras.push(page==='permissoes'?call.current('/api/v1/business/units').catch(()=>[]):call.current('/api/v1/business/units')); // a grant administrator may lack business.view
       else extras.push(Promise.resolve([]));
       if(page==='conectores')extras.push(call.current('/api/v1/business/hubs'));
       else extras.push(Promise.resolve([]));

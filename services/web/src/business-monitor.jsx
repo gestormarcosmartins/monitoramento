@@ -99,6 +99,13 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
     else {sequence.current++;setIndicators([]);setHealth(null);setOccurrences([]);} },[tenantId,access.capabilities?.join('|')]);
   useEffect(() => {const pop=()=>setPage(routeName());window.addEventListener('popstate',pop);return ()=>window.removeEventListener('popstate',pop);},[]);
   const allowed=access.capabilities||[];
+  // A grant administrator without 'business.view' (e.g. the first administrator designated by the Master) can only
+  // manage permissions: show that page alone, so the grant chain (Master -> administrator -> Master) is reachable.
+  if (access.enabled && has(allowed,'business.grants.manage') && !has(allowed,'business.view'))
+    return <div className="nexora-business">
+      <p className="info-banner">Você administra os acessos do Monitoramento de Negócios desta Empresa. Conceda as permissões necessárias aos usuários; as demais telas dependem da permissão de visualização.</p>
+      <BusinessP1 page="permissoes" tenantId={tenantId} access={access} request={requestRef.current} ui={ui} />
+    </div>;
   if (!access.enabled || !has(allowed,'business.view'))
     return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} onDone={onAccessChange} />;
   const openNew=()=>{setEditing(null);navigate('monitoramentos/novo');};
