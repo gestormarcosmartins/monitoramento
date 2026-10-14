@@ -168,6 +168,8 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
         rules = list(connection.execute("SELECT * FROM cm_notification_rules WHERE tenant_id=%s AND active AND %s=ANY(events)", (tenant_id,event)).fetchall())
     from .push import deliver_push
     deliver_push(tenant_id, incident_id, event, incident)
+    from .expo_push import create_infra_notification
+    create_infra_notification(tenant_id, incident_id, event, incident)
     failures = []
     try:
         _deliver_responsible_contacts(tenant_id, incident_id, event, incident)
