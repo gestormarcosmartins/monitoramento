@@ -39,3 +39,23 @@ def test_lock_screen_text_has_no_incident_title():
 def test_sla_events_skip_low_severity():
     assert ep.build_event("sla.resolution.level_1", {"priority": "low"}) is None
     assert ep.build_event("sla.resolution.level_1", {"priority": "high"})["category"] == "sla"
+
+
+def test_severity_aliases_from_business_monitor_are_normalized():
+    assert ep.normalize_severity("high") == "P1"
+    assert ep.normalize_severity("critical") == "P0"
+    assert ep.normalize_severity("P2") == "P2"
+    try:
+        ep.normalize_severity("urgent")
+        raise AssertionError("severidade inválida deveria falhar")
+    except ValueError:
+        pass
+
+
+def test_unknown_domain_is_rejected():
+    try:
+        ep.enqueue_notification(None, "t", domain="OTHER", source_type="x", source_id="1", event_key="k", severity="P1",
+                                category="c", title="t", body="b", action_type="a", action_ref=None, recipients=[])
+        raise AssertionError("domínio inválido deveria falhar")
+    except ValueError:
+        pass
