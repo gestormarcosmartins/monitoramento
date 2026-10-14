@@ -25,3 +25,11 @@
 .bm-glpi-form { display: grid; gap: 12px; max-width: 640px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--border, #d0d7de); border-radius: 8px; }
 .bm-glpi-form h3, .bm-glpi-form p { margin: 0; }
 .bm-glpi-form button { min-height: 44px; justify-self: start; }
+
+.nexora-form.bm-bootstrap-form { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 880px; margin-top: 12px; }
+.bm-bootstrap-form .field { margin: 0; min-width: 0; }
+.bm-bootstrap-form .field input, .bm-bootstrap-form .field select { width: 100%; min-height: 44px; }
+.bm-admins { margin-top: 16px; }
+.bm-admins h3 { margin: 0 0 8px; font-size: 1rem; }
+.bm-admins ul { margin: 0; padding-left: 20px; }
+@media (max-width: 720px) { .nexora-form.bm-bootstrap-form { grid-template-columns: minmax(0, 1fr); } }

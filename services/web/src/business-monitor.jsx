@@ -15,7 +15,9 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const [users,setUsers]=useState([]);
-  useEffect(()=>{ if(access.enabled) request('/api/v1/users').then(setUsers).catch(()=>setUsers([])); },[access.enabled,tenantId]);
+  const [admins,setAdmins]=useState([]);
+  const loadAdmins=()=>request('/api/v1/business/grants').then(rows=>setAdmins(rows.filter(r=>r.capability==='business.grants.manage'&&r.active))).catch(()=>setAdmins([]));
+  useEffect(()=>{ if(access.enabled){ request('/api/v1/users').then(setUsers).catch(()=>setUsers([])); loadAdmins(); } },[access.enabled,tenantId]);
   if (!isMaster) return <div className="panel"><h2>Acesso não autorizado</h2><p>Este usuário não possui concessão para Monitoramento de Negócios nesta Empresa.</p></div>;
   const enable=async(event)=>{
     event.preventDefault();setBusy(true);setMessage('');
@@ -30,13 +32,16 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
       await request('/api/v1/business/grants',{method:'PUT',body:JSON.stringify({
         user_id:form.get('user_id'),capability:'business.grants.manage',scope_type:'company',
         active:true,reason:form.get('reason')})});
+      await loadAdmins();
+      setMessage('ok');
       await onDone();
     }catch(e){setMessage(e.message||'Falha ao conceder acesso');}finally{setBusy(false);}
   };
   return <section className="panel">
     <h2>Ativação do Monitoramento de Negócios</h2>
     <p>Produto independente, sem acesso implícito: o Master técnico pode ativar e indicar o primeiro administrador, mas não pode conceder acesso a si mesmo.</p>
-    {message && <div role="alert" className="bm-error">{message}</div>}
+    {message==='ok' && <div role="status" className="info-banner">Administração concedida. Peça ao usuário indicado para entrar no Nexora: ele verá a tela de Permissões e poderá conceder acesso a você.</div>}
+    {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {!access.enabled ? (
       <form className="nexora-form" onSubmit={enable}>
         <label className="field"><span>Motivo da ativação</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: piloto comercial aprovado"/></label>
@@ -45,7 +50,7 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
     ) : (
       <>
         <p className="info-banner">Produto já ativado para esta Empresa. Indique um usuário para ser o primeiro administrador de negócios (ele poderá conceder acesso a outros, inclusive a você).</p>
-        <form className="nexora-form" onSubmit={grant}>
+        <form className="nexora-form bm-bootstrap-form" onSubmit={grant}>
           <label className="field"><span>Usuário</span><select name="user_id" required defaultValue="">
             <option value="" disabled>Selecione</option>
             {users.map(u=><option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
@@ -53,6 +58,8 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
           <label className="field"><span>Motivo</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: responsável pelo módulo de negócios"/></label>
           <div className="form-actions"><button className="primary" disabled={busy || !users.length}>{busy?'Concedendo...':'Conceder administração de negócios'}</button></div>
         </form>
+        {admins.length>0 && <div className="bm-admins"><h3>Administradores de negócios desta Empresa</h3>
+          <ul>{admins.map(a=><li key={a.user_id}><strong>{a.display_name}</strong> — {a.email} <small>(desde {fmt(a.granted_at)})</small></li>)}</ul></div>}
       </>
     )}
   </section>;
@@ -122,7 +129,8 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
     {!isForm && <nav className="bm-tabs" aria-label="Navegação do Monitoramento de Negócios">
       {[['visao-geral','Visão Geral'],['monitoramentos','Monitoramentos'],['ocorrencias','Ocorrências'],['processos','Processos'],['regras','Regras'],['conectores','Conectores'],['unidades','Unidades'],['notificacoes','Notificações'],['relatorios','Relatórios'],['permissoes','Permissões']].filter(([key])=>key!=='conectores'||has(allowed,'business.source.manage')).filter(([key])=>key!=='relatorios'||has(allowed,'business.export')).filter(([key])=>key!=='permissoes'||has(allowed,'business.grants.manage')).filter(([key])=>key!=='regras'||has(allowed,'business.view')).map(([key,label])=><button key={key} type="button" aria-current={page===key?'page':undefined} className={page===key?'active':''} onClick={()=>navigate(key)}>{label}</button>)}
     </nav>}
-    {message && <div role="alert" className="bm-error">{message}</div>}
+    {message==='ok' && <div role="status" className="info-banner">Administração concedida. Peça ao usuário indicado para entrar no Nexora: ele verá a tela de Permissões e poderá conceder acesso a você.</div>}
+    {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {busy && <p role="status">Carregando ou salvando informações...</p>}
     {isForm ? (
       canWrite ? <FormPage title={editable?'Editar monitoramento':'Novo monitoramento de negócio'} description="Informações e limites serão avaliados apenas após uma fonte autorizada enviar dados reais." onBack={()=>navigate('monitoramentos')}>
