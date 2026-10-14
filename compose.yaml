@@ -37,6 +37,25 @@ services:
     mem_limit: 384m
     cpus: 0.25
 
+  # Broker interno dos jobs do Business Worker. Fica so na rede privada: nenhum cliente (nem agente) o acessa;
+  # a API traduz claim/resultado/ack. Sem RABBITMQ_URL no .env a plataforma opera em modo "db" (sem broker).
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-nexora}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [private]
+    mem_limit: 512m
+    cpus: 0.30
+
   api:
     build: ./services/backend
     restart: unless-stopped
@@ -79,6 +98,8 @@ services:
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-30}
       ACTION_EXECUTION_ENABLED: ${ACTION_EXECUTION_ENABLED:-false}
       BENNER_INGEST_TOKEN: ${BENNER_INGEST_TOKEN:-}
+      RABBITMQ_URL: ${RABBITMQ_URL:-}
+      RABBITMQ_QUEUE_TYPE: ${RABBITMQ_QUEUE_TYPE:-classic}
       PUSH_TOKEN_KEY: ${PUSH_TOKEN_KEY:-}
       BUSINESS_SIGNING_KEY: ${BUSINESS_SIGNING_KEY:-}
       EXPO_PROJECT_IDS: ${EXPO_PROJECT_IDS:-}
@@ -284,6 +305,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  rabbitmq-data:
   glpi-db-data:
   glpi-data:
 

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     expo_push_url: str = Field(default="https://exp.host/--/api/v2/push", alias="EXPO_PUSH_URL")
     # Ed25519 seed (base64, 32 bytes) used to sign published Business query revisions.
     business_signing_key: str = Field(default="", alias="BUSINESS_SIGNING_KEY")
+    # RabbitMQ for Business job dispatch (central only; workers never see it). Empty = "db" mode.
+    rabbitmq_url: str = Field(default="", alias="RABBITMQ_URL")
+    rabbitmq_queue_type: str = Field(default="classic", alias="RABBITMQ_QUEUE_TYPE")
     expo_receipt_delay_seconds: int = Field(default=900, ge=60, alias="EXPO_RECEIPT_DELAY_SECONDS")
 
 

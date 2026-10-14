@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -25,7 +26,8 @@ from pydantic import BaseModel, Field
 
 from .auth import Identity, current_identity, tenant_header
 from .business import _actor, _enabled, _require, _scope_allows
-from .business_results import (ContractError, compute_metric, public_key_b64, sign_manifest, validate_columns,
+from .business_broker import BrokerUnavailable, get_broker
+from .business_results import (ContractError, canonical, compute_metric, public_key_b64, sign_manifest, validate_columns,
                                validate_limits, validate_metric, validate_result)
 from .business_sql import SqlRejected, validate_query
 from .db import tenant_connection
@@ -78,6 +80,40 @@ def worker_identity(x_tenant_id: str = Header(alias="X-Tenant-ID"), x_worker_id:
     if not enabled:
         raise HTTPException(404, "Business Monitor disabled")
     return worker
+
+
+# ------------------------------------------------------------------ broker dispatch (transactional outbox)
+PUBLISH_TOPIC = "business.job.publish"
+
+
+def _enqueue_publish(db: Any, tenant_id: str, execution_id: Any, attempt: int, delay_seconds: float = 0) -> None:
+    """With RabbitMQ configured, every (re)delivery is an outbox row written in the same transaction as the
+    execution change, so a crash between commit and publish never loses a schedule. No-op in db mode."""
+    if get_broker() is None:
+        return
+    db.execute("""INSERT INTO cm_outbox(tenant_id,topic,payload,available_at,idempotency_key)
+        VALUES (%s,%s,%s,now()+(%s::double precision * interval '1 second'),%s) ON CONFLICT DO NOTHING""",
+               (tenant_id, PUBLISH_TOPIC, Jsonb({"execution_id": str(execution_id)}), delay_seconds, f"bjp:{execution_id}:{attempt}"))
+
+
+def publish_job(tenant_id: str, execution_id: str) -> None:
+    """Outbox handler: put a small message on the worker's queue. Raises when the broker did not confirm,
+    so the outbox retries with backoff. Executions that are no longer pending are dropped silently."""
+    broker = get_broker()
+    if broker is None:
+        return
+    with tenant_connection(tenant_id) as db:
+        row = db.execute("""SELECT id,monitor_id,revision,worker_id,scheduled_at,expires_at,correlation_id,is_test,
+              EXTRACT(EPOCH FROM (expires_at-now())) AS ttl FROM cm_business_executions
+            WHERE tenant_id=%s AND id=%s AND state='PENDING' AND expires_at>now()""", (tenant_id, execution_id)).fetchone()
+    if not row:
+        return
+    broker.publish({"execution_id": str(row["id"]), "tenant_id": tenant_id, "worker_id": str(row["worker_id"]),
+                    "monitor_id": str(row["monitor_id"]), "revision": row["revision"], "test": row["is_test"],
+                    "scheduled_at": row["scheduled_at"].isoformat(), "expires_at": row["expires_at"].isoformat(),
+                    "correlation_id": str(row["correlation_id"])}, row["worker_id"], int(float(row["ttl"]) * 1000))
+    with tenant_connection(tenant_id) as db:
+        db.execute("UPDATE cm_business_executions SET published_at=now() WHERE tenant_id=%s AND id=%s", (tenant_id, execution_id))
 
 
 # ------------------------------------------------------------------ master: workers and sources
@@ -247,6 +283,7 @@ def test_revision(monitor_id: UUID, revision: int, tenant_id: str = Depends(tena
         execution = db.execute("""INSERT INTO cm_business_executions(tenant_id,monitor_id,revision,worker_id,is_test,expires_at)
             VALUES (%s,%s,%s,%s,true,now()+interval '5 minutes') RETURNING id""",
                                (tenant_id, monitor_id, revision, row["worker_id"])).fetchone()
+        _enqueue_publish(db, tenant_id, execution["id"], 0)
         _audit(db, tenant_id, actor["id"], "test", "business_monitor", monitor_id, {"revision": revision, "execution_id": str(execution["id"])})
     return {"execution_id": execution["id"], "state": "PENDING"}
 
@@ -421,44 +458,94 @@ def _resolve_parameters(spec: dict[str, Any], timezone: str) -> dict[str, Any]:
     return resolved
 
 
+def _job_message(db: Any, tenant_id: str, worker_id: Any, job: dict[str, Any]) -> dict[str, Any]:
+    rev = db.execute("""SELECT r.query_text,r.parameters,r.column_schema,r.limits,s.dialect,s.database_ref,t.timezone
+        FROM cm_business_monitor_revisions r JOIN cm_business_monitors m ON m.tenant_id=r.tenant_id AND m.id=r.monitor_id
+        JOIN cm_business_data_sources s ON s.tenant_id=m.tenant_id AND s.id=m.source_id
+        JOIN cm_tenants t ON t.id=r.tenant_id
+        WHERE r.tenant_id=%s AND r.monitor_id=%s AND r.revision=%s""", (tenant_id, job["monitor_id"], job["revision"])).fetchone()
+    manifest = {
+        "execution_id": str(job["id"]), "monitor_id": str(job["monitor_id"]), "revision": job["revision"],
+        "tenant_id": tenant_id, "worker_id": str(worker_id), "expires_at": job["expires_at"].isoformat(),
+        "lease_expires_at": job["lease_expires_at"].isoformat(), "database_ref": rev["database_ref"],
+        "dialect": rev["dialect"], "query": rev["query_text"],
+        "parameters": _resolve_parameters(rev["parameters"], rev["timezone"]),
+        "constraints": rev["limits"], "column_schema": rev["column_schema"], "test": job["is_test"],
+        "correlation_id": str(job["correlation_id"]),
+    }
+    # The worker verifies the signature over exactly these bytes and parses the job from them: no canonicalization
+    # to reimplement, and a captured job cannot be replayed (it is bound to this execution, worker and lease).
+    payload = canonical(manifest).decode()
+    return {"payload": payload, "signature": sign_manifest(manifest)}
+
+
+_LEASE_RETURNING = "RETURNING x.id,x.monitor_id,x.revision,x.expires_at,x.lease_expires_at,x.is_test,x.correlation_id"
+
+
+def _claim_from_db(db: Any, tenant_id: str, worker_id: Any, room: int) -> list[dict[str, Any]]:
+    return db.execute(f"""WITH due AS (
+          SELECT e.id FROM cm_business_executions e
+          JOIN cm_business_monitors m ON m.tenant_id=e.tenant_id AND m.id=e.monitor_id
+          WHERE e.tenant_id=%s AND e.worker_id=%s AND e.expires_at>now() AND e.attempts<%s
+            AND ((e.state='PENDING' AND e.available_at<=now()) OR (e.state IN ('LEASED','RUNNING') AND e.lease_expires_at<now()))
+            AND (e.is_test OR (m.status='ACTIVE' AND m.published_revision=e.revision))
+          ORDER BY e.scheduled_at FOR UPDATE OF e SKIP LOCKED LIMIT %s)
+        UPDATE cm_business_executions x SET state='LEASED',leased_at=now(),lease_expires_at=now()+(%s * interval '1 second'),
+          lease_renewals=0,attempts=x.attempts+1 FROM due WHERE x.id=due.id {_LEASE_RETURNING}""",
+                      (tenant_id, worker_id, MAX_ATTEMPTS, room, LEASE_SECONDS)).fetchall()
+
+
+def _lease_delivery(db: Any, tenant_id: str, worker_id: Any, body: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    """Decide what a broker message means now. Returns (verdict, leased row): 'leased', 'stale' (ack and drop)
+    or 'poison' (dead-letter). Redeliveries and duplicates are harmless because the database state decides."""
+    if str(body.get("tenant_id")) != tenant_id or str(body.get("worker_id")) != str(worker_id) or not UUID_RE.fullmatch(str(body.get("execution_id", ""))):
+        return "poison", None
+    row = db.execute("""SELECT e.state,e.attempts,e.available_at,e.expires_at,e.is_test,e.revision,m.status,m.published_revision
+        FROM cm_business_executions e JOIN cm_business_monitors m ON m.tenant_id=e.tenant_id AND m.id=e.monitor_id
+        WHERE e.tenant_id=%s AND e.id=%s AND e.worker_id=%s FOR UPDATE OF e""", (tenant_id, body["execution_id"], worker_id)).fetchone()
+    if not row:
+        return "poison", None
+    now = datetime.now(UTC)
+    runnable = row["is_test"] or (row["status"] == "ACTIVE" and row["published_revision"] == row["revision"])
+    if row["state"] != "PENDING" or row["expires_at"] <= now or not runnable or row["attempts"] >= MAX_ATTEMPTS or row["available_at"] > now:
+        return "stale", None  # already leased/finished, expired, canceled or revoked: drop the message
+    leased = db.execute(f"""UPDATE cm_business_executions x SET state='LEASED',leased_at=now(),
+          lease_expires_at=now()+(%s * interval '1 second'),lease_renewals=0,attempts=x.attempts+1
+        WHERE x.tenant_id=%s AND x.id=%s {_LEASE_RETURNING}""", (LEASE_SECONDS, tenant_id, body["execution_id"])).fetchone()
+    return "leased", leased
+
+
 @worker_router.get("/jobs/claim")
 def claim_jobs(limit: int = Query(1, ge=1, le=4), worker: dict[str, Any] = Depends(worker_identity)):
     tenant_id, worker_id = str(worker["tenant_id"]), worker["id"]
-    jobs = []
     with tenant_connection(tenant_id) as db:
         busy = db.execute("""SELECT count(*) AS n FROM cm_business_executions WHERE tenant_id=%s AND worker_id=%s
             AND state IN ('LEASED','RUNNING') AND lease_expires_at>now()""", (tenant_id, worker_id)).fetchone()["n"]
-        room = min(limit, worker["capacity"] - busy)  # the worker's own concurrency is enforced centrally too
-        if room <= 0:
-            return {"jobs": []}
-        claimed = db.execute("""WITH due AS (
-              SELECT e.id FROM cm_business_executions e
-              JOIN cm_business_monitors m ON m.tenant_id=e.tenant_id AND m.id=e.monitor_id
-              WHERE e.tenant_id=%s AND e.worker_id=%s AND e.expires_at>now() AND e.attempts<%s
-                AND ((e.state='PENDING' AND e.available_at<=now()) OR (e.state IN ('LEASED','RUNNING') AND e.lease_expires_at<now()))
-                AND (e.is_test OR (m.status='ACTIVE' AND m.published_revision=e.revision))
-              ORDER BY e.scheduled_at FOR UPDATE OF e SKIP LOCKED LIMIT %s)
-            UPDATE cm_business_executions x SET state='LEASED',leased_at=now(),lease_expires_at=now()+(%s * interval '1 second'),
-              lease_renewals=0,attempts=x.attempts+1 FROM due WHERE x.id=due.id
-            RETURNING x.id,x.monitor_id,x.revision,x.expires_at,x.lease_expires_at,x.is_test,x.correlation_id""",
-                              (tenant_id, worker_id, MAX_ATTEMPTS, room, LEASE_SECONDS)).fetchall()
-        for job in claimed:
-            rev = db.execute("""SELECT r.query_text,r.parameters,r.column_schema,r.limits,s.dialect,s.database_ref,t.timezone
-                FROM cm_business_monitor_revisions r JOIN cm_business_monitors m ON m.tenant_id=r.tenant_id AND m.id=r.monitor_id
-                JOIN cm_business_data_sources s ON s.tenant_id=m.tenant_id AND s.id=m.source_id
-                JOIN cm_tenants t ON t.id=r.tenant_id
-                WHERE r.tenant_id=%s AND r.monitor_id=%s AND r.revision=%s""", (tenant_id, job["monitor_id"], job["revision"])).fetchone()
-            manifest = {
-                "execution_id": str(job["id"]), "monitor_id": str(job["monitor_id"]), "revision": job["revision"],
-                "tenant_id": tenant_id, "worker_id": str(worker_id), "expires_at": job["expires_at"].isoformat(),
-                "lease_expires_at": job["lease_expires_at"].isoformat(), "database_ref": rev["database_ref"],
-                "dialect": rev["dialect"], "query": rev["query_text"],
-                "parameters": _resolve_parameters(rev["parameters"], rev["timezone"]),
-                "constraints": rev["limits"], "column_schema": rev["column_schema"], "test": job["is_test"],
-                "correlation_id": str(job["correlation_id"]),
-            }
-            # Signed per job: binds the query to this execution and worker, so a captured manifest cannot be replayed.
-            jobs.append({**manifest, "signature": sign_manifest(manifest)})
+    room = min(limit, worker["capacity"] - busy)  # the worker's own concurrency is enforced centrally too
+    if room <= 0:
+        return {"jobs": []}
+    broker = get_broker()
+    jobs: list[dict[str, str]] = []
+    if broker is None:
+        with tenant_connection(tenant_id) as db:
+            for job in _claim_from_db(db, tenant_id, worker_id, room):
+                jobs.append(_job_message(db, tenant_id, worker_id, job))
+        return {"jobs": jobs}
+    try:
+        with broker.consume(worker_id, room) as deliveries:
+            for delivery in deliveries:
+                with tenant_connection(tenant_id) as db:
+                    verdict, leased = _lease_delivery(db, tenant_id, worker_id, delivery.body)
+                    if leased:
+                        jobs.append(_job_message(db, tenant_id, worker_id, leased))
+                # Acknowledge only after the lease is committed: the database is now the record of this job.
+                if verdict == "poison":
+                    delivery.reject_to_dlq()
+                else:
+                    delivery.ack()
+    except BrokerUnavailable as error:
+        logger.warning("business_broker_unavailable", extra={"tenant_id": tenant_id, "error": str(error)})
+        raise HTTPException(503, "Job queue unavailable; retry later") from error
     return {"jobs": jobs}
 
 
@@ -519,6 +606,7 @@ def _record_failure(db: Any, tenant_id: str, row: dict[str, Any], status: str, c
         delay = min(900, 30 * 2 ** row["attempts"])
         db.execute("""UPDATE cm_business_executions SET state='PENDING',available_at=now()+(%s * interval '1 second'),lease_expires_at=NULL,
             error_code=%s,error_message=%s WHERE tenant_id=%s AND id=%s""", (delay, code, message, tenant_id, row["id"]))
+        _enqueue_publish(db, tenant_id, row["id"], row["attempts"], delay)
         return "PENDING"
     db.execute("""UPDATE cm_business_executions SET state=%s,finished_at=now(),duration_ms=%s,error_code=%s,error_message=%s
         WHERE tenant_id=%s AND id=%s""", (status, duration_ms, code, message, tenant_id, row["id"]))
@@ -630,8 +718,13 @@ def run_scheduler(connect: Any) -> dict[str, int]:
                     continue
                 counts["expired"] += len(db.execute("""UPDATE cm_business_executions SET state='EXPIRED',finished_at=now(),error_code='missed_window'
                     WHERE tenant_id=%s AND state='PENDING' AND expires_at<now() RETURNING id""", (tenant_id,)).fetchall())
+                if get_broker() is not None:
+                    for lost in db.execute("""UPDATE cm_business_executions SET state='PENDING',lease_expires_at=NULL,
+                          available_at=now()+interval '15 seconds',error_code='lease_expired' WHERE tenant_id=%s AND state IN ('LEASED','RUNNING')
+                          AND lease_expires_at<now() AND attempts<%s AND expires_at>now() RETURNING id,attempts""", (tenant_id, MAX_ATTEMPTS)).fetchall():
+                        _enqueue_publish(db, tenant_id, lost["id"], lost["attempts"], 15)
                 exhausted = db.execute("""SELECT * FROM cm_business_executions WHERE tenant_id=%s AND state IN ('LEASED','RUNNING')
-                    AND lease_expires_at<now() AND attempts>=%s FOR UPDATE SKIP LOCKED""", (tenant_id, MAX_ATTEMPTS)).fetchall()
+                    AND lease_expires_at<now() AND (attempts>=%s OR expires_at<=now()) FOR UPDATE SKIP LOCKED""", (tenant_id, MAX_ATTEMPTS)).fetchall()
                 for row in exhausted:
                     _record_failure(db, tenant_id, row, "TIMED_OUT", "lease_expired", "Worker did not report within the lease", False, None)
                     counts["failed"] += 1
@@ -644,8 +737,9 @@ def run_scheduler(connect: Any) -> dict[str, int]:
                       ORDER BY m.last_scheduled_at NULLS FIRST LIMIT 200 FOR UPDATE OF m SKIP LOCKED""", (tenant_id,)).fetchall()
                 for monitor in due:
                     window = min(monitor["interval_seconds"], 300)  # stale jobs expire instead of piling up
-                    db.execute("""INSERT INTO cm_business_executions(tenant_id,monitor_id,revision,worker_id,expires_at)
-                        VALUES (%s,%s,%s,%s,now()+(%s * interval '1 second'))""", (tenant_id, monitor["id"], monitor["revision"], monitor["worker_id"], window))
+                    created = db.execute("""INSERT INTO cm_business_executions(tenant_id,monitor_id,revision,worker_id,expires_at)
+                        VALUES (%s,%s,%s,%s,now()+(%s * interval '1 second')) RETURNING id""", (tenant_id, monitor["id"], monitor["revision"], monitor["worker_id"], window)).fetchone()
+                    _enqueue_publish(db, tenant_id, created["id"], 0)
                     db.execute("UPDATE cm_business_monitors SET last_scheduled_at=now() WHERE tenant_id=%s AND id=%s", (tenant_id, monitor["id"]))
                     counts["scheduled"] += 1
                 offline = db.execute("""UPDATE cm_business_workers SET status='OFFLINE' WHERE tenant_id=%s AND status='ONLINE'
@@ -657,3 +751,35 @@ def run_scheduler(connect: Any) -> dict[str, int]:
         except Exception:
             logger.exception("business_scheduler_tenant_failed", extra={"tenant_id": tenant_id})
     return counts
+
+
+# ------------------------------------------------------------------ broker visibility (no broker administration is exposed)
+@master_router.get("/broker/status")
+def broker_status(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)):
+    _master(identity, tenant_id)
+    broker = get_broker()
+    with tenant_connection(tenant_id) as db:
+        workers = [r["id"] for r in db.execute("SELECT id FROM cm_business_workers WHERE tenant_id=%s AND status<>'REVOKED'", (tenant_id,)).fetchall()]
+        pending = db.execute("""SELECT count(*) FILTER (WHERE state='PENDING') AS pending,count(*) FILTER (WHERE state IN ('LEASED','RUNNING')) AS active,
+              EXTRACT(EPOCH FROM now()-min(created_at) FILTER (WHERE state='PENDING'))::int AS oldest_pending_seconds,
+              count(*) FILTER (WHERE state='EXPIRED' AND finished_at>now()-interval '24 hours') AS expired_24h
+            FROM cm_business_executions WHERE tenant_id=%s""", (tenant_id,)).fetchone()
+    if broker is None:
+        return {"mode": "db", **pending}
+    try:
+        return {**broker.stats(workers), **pending}
+    except BrokerUnavailable as error:
+        raise HTTPException(503, "Broker unavailable") from error
+
+
+@master_router.get("/broker/dead-letters")
+def dead_letters(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity), limit: int = Query(50, ge=1, le=200)):
+    _master(identity, tenant_id)
+    broker = get_broker()
+    if broker is None:
+        return []
+    try:
+        # Only this company's messages: the dead-letter queue is shared, the answer never is.
+        return [m for m in broker.peek_dlq(limit) if str(m.get("tenant_id")) == tenant_id]
+    except BrokerUnavailable as error:
+        raise HTTPException(503, "Broker unavailable") from error

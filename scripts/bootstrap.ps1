@@ -19,6 +19,7 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
         "change-me-keycloak" = [guid]::NewGuid().ToString("N")
         "change-me-keycloak-admin" = [guid]::NewGuid().ToString("N")
         "change-me-glpi" = [guid]::NewGuid().ToString("N")
+        "change-me-rabbitmq" = [guid]::NewGuid().ToString("N")
         "change-me-with-at-least-32-random-characters" = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
     }
     foreach ($entry in $secrets.GetEnumerator()) {

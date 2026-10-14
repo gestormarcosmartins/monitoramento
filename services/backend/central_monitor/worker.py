@@ -445,6 +445,9 @@ def process_outbox() -> None:
                 sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
             elif row["topic"] == "incident.comment_created":
                 sync_incident_comment(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["comment_id"])
+            elif row["topic"] == "business.job.publish":
+                from .business_monitors import publish_job
+                publish_job(str(row["tenant_id"]),row["payload"]["execution_id"])
             elif row["topic"] == "tenant.created":
                 from .glpi_entities import ensure_tenant_entity
                 ensure_tenant_entity(str(row["tenant_id"]))
