@@ -41,3 +41,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Chaves privadas de conta de servico do Firebase/Google (NUNCA commitar; ficam no EAS).
+# O google-services.json do app e publico e PODE ser versionado.
+*-firebase-adminsdk-*.json
+service-account*.json
