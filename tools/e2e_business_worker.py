@@ -89,6 +89,9 @@ monitor = bm.create_monitor(bm.MonitorCreate(
     metric={"kind": "sum", "column": "valor_vencido"}), tenant, master_ident)
 bm.test_revision(monitor["id"], 1, tenant, master_ident)
 
+RELEASES = pathlib.Path(tempfile.mkdtemp(prefix="nx-e2e-rel-"))
+UPDATES = pathlib.Path(tempfile.mkdtemp(prefix="nx-e2e-upd-"))
+env["BUSINESS_RELEASES_DIR"] = str(RELEASES)
 api = subprocess.Popen([sys.executable, "-m", "uvicorn", "central_monitor.main:app", "--port", str(args.port), "--log-level", "warning"],
                        env=env, cwd=str(ROOT / "services" / "backend"))
 worker_proc = None
@@ -109,6 +112,7 @@ try:
     wenv = dict(os.environ, NEXORA_BW_SERVER_URL=base, NEXORA_BW_TENANT_ID=tenant, NEXORA_BW_WORKER_ID=str(worker["id"]),
                 NEXORA_BW_SIGNING_KEY=pinned, NEXORA_BW_TOKEN=worker["worker_token"], NEXORA_BW_POLL_SECONDS="5",
                 NEXORA_BW_ALLOW_PLAINTEXT_LOOPBACK_DB="1",
+                NEXORA_BW_UPDATE_DIRECTORY=str(UPDATES), NEXORA_BW_UPDATE_START_DELAY_SECONDS="1", NEXORA_BW_UPDATE_CHECK_MINUTES="5", NEXORA_BW_UPDATE_CHECK_SECONDS="3",
                 NEXORA_BW_DB_ERP_PRINCIPAL=f"Host={host};Port={port};Database=erp_demo;Username=erp_ro;Password=ro",
                 DOTNET_ROOT=str(pathlib.Path(args.dotnet).parent))
     worker_proc = subprocess.Popen([args.dotnet, str(dll)], env=wenv, cwd=str(dll.parent))
@@ -157,6 +161,41 @@ try:
         check(False, "read-only login cannot write")
     except pg.errors.InsufficientPrivilege:
         check(True, "the read-only database login cannot write")
+
+    # ---- signed remote update: register -> canary offer -> download -> verify -> stage -> restart request -> re-verification
+    import hashlib
+    from central_monitor import business_releases as brel
+    platform = "win-x64" if os.name == "nt" else "linux-x64"
+    package = b"fake-release-package-1.9.0"
+    (RELEASES / "w-1.9.0.pkg").write_bytes(package)
+    brel._releases_dir = lambda: RELEASES  # this process registers the release; the API process reads BUSINESS_RELEASES_DIR
+    release = brel.register_release(brel.ReleaseCreate(version="1.9.0", platform=platform, file_name="w-1.9.0.pkg"), tenant, master_ident)
+    check(release["channel"] == "canary", "a new release is born canary")
+    deadline = time.time() + 20
+    time.sleep(8)  # stable-ring worker: the canary release must NOT be staged
+    check(not (UPDATES / "ready" / "pending.json").exists(), "a stable-ring worker is not offered a canary release")
+    brel.set_update_ring(worker["id"], brel.RingBody(ring="canary"), tenant, master_ident)
+    deadline = time.time() + 120
+    while time.time() < deadline and not (UPDATES / "ready" / "pending.json").exists():
+        if worker_proc.poll() is not None and not (UPDATES / "ready" / "pending.json").exists():
+            raise SystemExit(f"worker exited before staging (code {worker_proc.returncode})")
+        time.sleep(2)
+    check((UPDATES / "ready" / "pending.json").exists(), "canary worker downloaded and staged the signed update over real HTTP")
+    check((UPDATES / "ready" / "package.pkg").read_bytes() == package, "staged package is byte-identical")
+    check(hashlib.sha256(package).hexdigest() == release["sha256"], "central hash matches the package")
+    try:
+        worker_proc.wait(60)
+    except subprocess.TimeoutExpired:
+        raise SystemExit("worker did not request a restart after staging")
+    check(worker_proc.returncode == 75, "worker exited with code 75 to apply the update on restart")
+    with tenant_connection(tenant) as c:
+        status = c.execute("SELECT update_status,update_version,platform FROM cm_business_workers WHERE id=%s", (worker["id"],)).fetchone()
+    check((status["update_status"], status["update_version"], status["platform"]) == ("DOWNLOADED", "1.9.0", platform), "central recorded DOWNLOADED 1.9.0")
+    verdict = subprocess.run([args.dotnet, str(dll), "--verify-staged", str(UPDATES)], env=wenv, cwd=str(dll.parent), capture_output=True, text=True)
+    check(verdict.stdout.strip().splitlines()[-1] == "ok" and verdict.returncode == 0, "the installed binary re-verifies the staged package (--verify-staged = ok)")
+    (UPDATES / "ready" / "package.pkg").write_bytes(b"tampered-after-staging-xx")
+    verdict = subprocess.run([args.dotnet, str(dll), "--verify-staged", str(UPDATES)], env=wenv, cwd=str(dll.parent), capture_output=True, text=True)
+    check(verdict.returncode == 3 and verdict.stdout.strip().splitlines()[-1] in ("size_mismatch", "hash_mismatch"), "a package swapped after staging is refused")
     print("E2E OK")
 finally:
     for proc in (worker_proc, api):

@@ -43,6 +43,11 @@ Copy-Item -Path (Join-Path $SourceDirectory "*") -Destination $InstallDirectory 
 
 # Secrets: only SYSTEM, Administrators and the service account may read them.
 icacls $DataDirectory /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "NT SERVICE\${serviceName}:(OI)(CI)R" | Out-Null
+# Remote update: the service may write ONLY the updates folder; the apply script and its state are SYSTEM/Administrators-only.
+$updates = Join-Path $DataDirectory "updates"
+New-Item -ItemType Directory -Force $updates | Out-Null
+icacls $updates /grant "NT SERVICE\${serviceName}:(OI)(CI)M" | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "apply-business-worker-update.ps1") -Destination (Join-Path $DataDirectory "apply-update.ps1") -Force
 $plain = [System.Net.NetworkCredential]::new("", $Token).Password
 Set-Content -LiteralPath (Join-Path $secrets "worker.token") -Value $plain -NoNewline -Encoding ascii
 if ($DatabaseRef) {
@@ -56,6 +61,7 @@ $settings = @{
     ServerUrl = $ServerUrl.TrimEnd('/'); TenantId = $TenantId; WorkerId = $WorkerId; SigningPublicKey = $SigningPublicKey
     TokenFile = (Join-Path $secrets "worker.token"); SecretsDirectory = $secrets
     PollSeconds = 30; HeartbeatSeconds = 30; AllowUntrustedServerCertificate = $false; AssumeUtcForUnspecified = $true
+    UpdateCheckMinutes = 10; UpdateDirectory = $updates
   }
   Logging = @{ LogLevel = @{ Default = "Information"; Microsoft = "Warning" } }
 }
@@ -66,7 +72,11 @@ New-Service -Name $serviceName -DisplayName "Nexora Business Worker" -BinaryPath
   -StartupType Automatic -Description "Executes approved read-only business queries for Nexora. Independent from the Nexora Monitoring Agent." | Out-Null
 sc.exe config $serviceName obj= "NT SERVICE\$serviceName" | Out-Null          # virtual account, no password, least privilege
 sc.exe sidtype $serviceName unrestricted | Out-Null
-sc.exe failure $serviceName reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null   # self-restart; never touches the infra agent
+# After a crash OR after the worker stages an update and exits (code 75), the failure action runs the apply script as SYSTEM:
+# it applies a verified package (with probation and rollback) and always starts the service again. Never touches the infra agent.
+$applyCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$DataDirectorypply-update.ps1`" -InstallDirectory `"$InstallDirectory`" -DataDirectory `"$DataDirectory`""
+sc.exe failureflag $serviceName 1 | Out-Null
+sc.exe failure $serviceName reset= 86400 command= $applyCommand actions= run/2000/run/5000/run/30000 | Out-Null
 Start-Service $serviceName
 Write-Host "Nexora Business Worker installed and started. Infrastructure agent was not touched."
 Write-Host "Logs: Windows Event Viewer > Application > source 'Nexora Business Worker'."

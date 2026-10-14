@@ -132,10 +132,10 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
   useEffect(() => {const pop=()=>{setPage(routeName());setRouteTick(t=>t+1);};window.addEventListener('popstate',pop);return ()=>window.removeEventListener('popstate',pop);},[]);
   const allowed=access.capabilities||[];
   const governance=access.enabled&&isMaster;
-  const queryPages=['consultas','workers','fontes','filas'];
+  const queryPages=['consultas','workers','fontes','filas','atualizacoes'];
   if (governance && !has(allowed,'business.view')) {
     // The technical Master governs queries but holds no business data access: only governance pages, never indicators.
-    const tabs=[['acesso','Primeiro acesso'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],
+    const tabs=[['acesso','Primeiro acesso'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],['atualizacoes','Atualizações'],
       ...(has(allowed,'business.grants.manage')?[['permissoes','Permissões']]:[])];
     const current=tabs.some(([key])=>key===page)?page:'consultas';
     return <div className="nexora-business">
@@ -182,7 +182,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
   const filtered=indicators.filter(x=>`${x.name} ${x.code}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="nexora-business">
     {!isForm && <nav className="bm-tabs" aria-label="Navegação do Monitoramento de Negócios">
-      {[['visao-geral','Visão Geral'],['monitoramentos','Monitoramentos'],['ocorrencias','Ocorrências'],['processos','Processos'],['regras','Regras'],['conectores','Conectores'],['unidades','Unidades'],['notificacoes','Notificações'],['relatorios','Relatórios'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],['permissoes','Permissões']].filter(([key])=>!['workers','fontes','filas'].includes(key)||isMaster).filter(([key])=>key!=='conectores'||has(allowed,'business.source.manage')).filter(([key])=>key!=='relatorios'||has(allowed,'business.export')).filter(([key])=>key!=='permissoes'||has(allowed,'business.grants.manage')).filter(([key])=>key!=='regras'||has(allowed,'business.view')).map(([key,label])=><button key={key} type="button" aria-current={page===key?'page':undefined} className={page===key?'active':''} onClick={()=>navigate(key)}>{label}</button>)}
+      {[['visao-geral','Visão Geral'],['monitoramentos','Monitoramentos'],['ocorrencias','Ocorrências'],['processos','Processos'],['regras','Regras'],['conectores','Conectores'],['unidades','Unidades'],['notificacoes','Notificações'],['relatorios','Relatórios'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],['atualizacoes','Atualizações'],['permissoes','Permissões']].filter(([key])=>!['workers','fontes','filas','atualizacoes'].includes(key)||isMaster).filter(([key])=>key!=='conectores'||has(allowed,'business.source.manage')).filter(([key])=>key!=='relatorios'||has(allowed,'business.export')).filter(([key])=>key!=='permissoes'||has(allowed,'business.grants.manage')).filter(([key])=>key!=='regras'||has(allowed,'business.view')).map(([key,label])=><button key={key} type="button" aria-current={page===key?'page':undefined} className={page===key?'active':''} onClick={()=>navigate(key)}>{label}</button>)}
     </nav>}
     {message==='ok' && <div role="status" className="info-banner">Administração concedida. Peça ao usuário indicado para entrar no Nexora: ele verá a tela de Permissões e poderá conceder acesso a você.</div>}
     {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}

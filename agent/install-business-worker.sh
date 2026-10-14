@@ -40,6 +40,8 @@ id nexora-bw >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/s
 install -d -m 0755 /opt/nexora-business-worker
 install -d -m 0750 -o root -g nexora-bw /etc/nexora-business-worker /etc/nexora-business-worker/secrets
 cp -a "$SOURCE"/. /opt/nexora-business-worker/
+install -d -m 0755 /usr/local/lib/nexora-business-worker
+install -m 0755 -o root -g root "$(dirname "$0")/apply-business-worker-update.sh" /usr/local/lib/nexora-business-worker/apply-update.sh
 chmod 0755 /opt/nexora-business-worker/Nexora.BusinessWorker
 install -m 0640 -o root -g nexora-bw "$TOKEN_FILE" /etc/nexora-business-worker/secrets/worker.token
 if [ -n "$DATABASE_REF" ]; then
@@ -58,7 +60,9 @@ cat > /opt/nexora-business-worker/appsettings.json <<JSON
     "PollSeconds": 30,
     "HeartbeatSeconds": 30,
     "AllowUntrustedServerCertificate": false,
-    "AssumeUtcForUnspecified": true
+    "AssumeUtcForUnspecified": true,
+    "UpdateCheckMinutes": 10,
+    "UpdateDirectory": "/var/lib/nexora-business-worker/updates"
   },
   "Logging": { "LogLevel": { "Default": "Information", "Microsoft": "Warning" } }
 }

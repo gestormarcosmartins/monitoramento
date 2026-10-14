@@ -20,7 +20,7 @@ test("query monitor column and parameter parsing follow the server contract", ()
 });
 
 test("query monitor screens use dedicated addressable pages, never modals, prompts or sample data", () => {
-  for (const route of ["consultas/novo", "revisao", "situacao", "execucoes", "workers/novo", "revogar", "fontes/novo", "reprocessar", "descartar"]) {
+  for (const route of ["consultas/novo", "revisao", "situacao", "execucoes", "workers/novo", "revogar", "fontes/novo", "reprocessar", "descartar", "atualizacoes/novo", "promover", "anel"]) {
     assert.ok(source.includes(route) || shell.includes(route), `route ${route}`);
   }
   assert.doesNotMatch(source, /window\.(confirm|prompt|alert)|\bconfirm\(|\bprompt\(|role="dialog"|aria-modal/);

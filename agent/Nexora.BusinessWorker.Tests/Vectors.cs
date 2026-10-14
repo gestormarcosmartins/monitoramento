@@ -22,6 +22,14 @@ public static class Vectors
         return options;
     }
 
+    public static string Package => Root.GetProperty("package").GetString()!;
+
+    public static JobEnvelope Update(string name)
+    {
+        var item = Root.GetProperty("updates").GetProperty(name);
+        return new JobEnvelope { Payload = item.GetProperty("payload").GetString()!, Signature = item.GetProperty("signature").GetString()! };
+    }
+
     public static JobEnvelope Get(string name)
     {
         var item = Root.GetProperty("vectors").GetProperty(name);

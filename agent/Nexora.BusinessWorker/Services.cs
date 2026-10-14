@@ -9,17 +9,18 @@ public sealed class HeartbeatService : BackgroundService
     private readonly ICentralApi _api;
     private readonly WorkerOptions _options;
     private readonly ILogger<HeartbeatService> _logger;
+    private readonly UpdateGate? _gate;
 
-    public HeartbeatService(ICentralApi api, WorkerOptions options, ILogger<HeartbeatService> logger)
+    public HeartbeatService(ICentralApi api, WorkerOptions options, ILogger<HeartbeatService> logger, UpdateGate? gate = null)
     {
-        _api = api; _options = options; _logger = logger;
+        _api = api; _options = options; _logger = logger; _gate = gate;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await _api.HeartbeatAsync(stoppingToken); }
+            try { await _api.HeartbeatAsync(stoppingToken); _gate?.MarkHealthy(); }
             catch (Exception ex) when (ex is HttpRequestException or CentralApiException or TaskCanceledException && !stoppingToken.IsCancellationRequested)
             {
                 _logger.LogWarning("Heartbeat failed: {Error}", ex.GetType().Name);
@@ -36,10 +37,11 @@ public sealed class JobPollingService : BackgroundService
     private readonly JobRunner _runner;
     private readonly WorkerOptions _options;
     private readonly ILogger<JobPollingService> _logger;
+    private readonly UpdateGate? _gate;
 
-    public JobPollingService(ICentralApi api, JobRunner runner, WorkerOptions options, ILogger<JobPollingService> logger)
+    public JobPollingService(ICentralApi api, JobRunner runner, WorkerOptions options, ILogger<JobPollingService> logger, UpdateGate? gate = null)
     {
-        _api = api; _runner = runner; _options = options; _logger = logger;
+        _api = api; _runner = runner; _options = options; _logger = logger; _gate = gate;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,6 +50,7 @@ public sealed class JobPollingService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             var delay = TimeSpan.FromSeconds(_options.PollSeconds);
+            if (_gate is { RestartPending: true }) { await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false); continue; }  // an update waits for the current job
             try
             {
                 var jobs = await _api.ClaimAsync(1, stoppingToken);  // concurrency is 1 per worker

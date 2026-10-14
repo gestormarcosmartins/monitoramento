@@ -18,6 +18,7 @@ os.environ.update({
     "ZABBIX_API_URL": "http://z", "ZABBIX_API_TOKEN": "t",
     "BUSINESS_SIGNING_KEY": base64.b64encode(bytes([7]) * 32).decode(),  # test-only seed
 })
+from central_monitor import business_releases as rel  # noqa: E402
 from central_monitor import business_results as br  # noqa: E402
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -54,7 +55,34 @@ vectors = {
     "limits_too_big": signed(manifest(constraints={"timeout_seconds": 600, "max_rows": 500, "max_bytes": 5242880})),
     "bad_dialect": signed(manifest(dialect="oracle")),
 }
-out = {"public_key": br.public_key_b64(), "tenant_id": TENANT, "worker_id": WORKER, "now": NOW, "vectors": vectors}
+# --- signed update manifests (business_releases.build_manifest / envelope: the central's real code) ---
+import hashlib  # noqa: E402
+from datetime import datetime  # noqa: E402
+
+PACKAGE = b"package-1.1.0"
+UPDATE_NOW = datetime.fromisoformat("2026-10-14T09:30:00+00:00")
+
+
+def update(platform, version="1.1.0", rollback=False, tenant=TENANT, worker=WORKER, issued=UPDATE_NOW):
+    release = {"version": version, "platform": platform, "sha256": hashlib.sha256(PACKAGE).hexdigest(), "size_bytes": len(PACKAGE)}
+    m = rel.build_manifest({"tenant_id": tenant, "id": worker}, release, rollback, issued)
+    return rel.envelope(m)
+
+
+updates = {}
+for platform in ("win-x64", "linux-x64"):
+    updates[f"ok_{platform}"] = update(platform)
+    updates[f"rollback_{platform}"] = update(platform, version="0.9.0", rollback=True)
+    updates[f"downgrade_{platform}"] = update(platform, version="0.9.0")
+    updates[f"same_{platform}"] = update(platform, version="1.0.0")
+    updates[f"wrong_tenant_{platform}"] = update(platform, tenant=OTHER)
+    updates[f"wrong_worker_{platform}"] = update(platform, worker=OTHER)
+    updates[f"old_{platform}"] = update(platform, issued=datetime.fromisoformat("2026-10-12T08:00:00+00:00"))
+    updates[f"expired_offer_{platform}"] = update(platform, issued=datetime.fromisoformat("2026-10-14T08:00:00+00:00"))
+updates["wrong_platform_win-x64"] = update("linux-x64")
+updates["wrong_platform_linux-x64"] = update("win-x64")
+
+out = {"public_key": br.public_key_b64(), "tenant_id": TENANT, "worker_id": WORKER, "now": NOW, "vectors": vectors, "updates": updates, "package": PACKAGE.decode()}
 target = ROOT / "agent" / "Nexora.BusinessWorker.Tests" / "TestVectors.json"
 target.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
 print("wrote", target)

@@ -9,6 +9,10 @@ Type=notify
 User=nexora-bw
 Group=nexora-bw
 WorkingDirectory=/opt/nexora-business-worker
+# Remote update: before each start, apply a staged package that the installed binary re-verified (signed manifest + SHA-256),
+# with probation and automatic rollback. The leading + runs it with full privileges; it never fails the unit.
+ExecStartPre=+/usr/local/lib/nexora-business-worker/apply-update.sh
+StateDirectory=nexora-business-worker
 ExecStart=/opt/nexora-business-worker/Nexora.BusinessWorker
 # Independent supervision: a crash here restarts only this unit; the infrastructure agent is another unit.
 Restart=always

@@ -18,6 +18,9 @@ public sealed class JobRunner
     private readonly ILogger<JobRunner> _logger;
     private readonly TimeProvider _time;
     private readonly TimeSpan[] _resultRetryDelays;
+    private int _running;
+    /// <summary>True while a job is between verification and its final report (a restart must wait for it).</summary>
+    public bool IsBusy => Volatile.Read(ref _running) > 0;
 
     public JobRunner(ICentralApi api, IQueryExecutor executor, SecretResolver secrets, WorkerOptions options,
         ILogger<JobRunner> logger, TimeProvider? time = null, TimeSpan[]? resultRetryDelays = null)
@@ -28,6 +31,13 @@ public sealed class JobRunner
     }
 
     public async Task RunAsync(JobEnvelope envelope, CancellationToken stop)
+    {
+        Interlocked.Increment(ref _running);
+        try { await RunCoreAsync(envelope, stop); }
+        finally { Interlocked.Decrement(ref _running); }
+    }
+
+    private async Task RunCoreAsync(JobEnvelope envelope, CancellationToken stop)
     {
         Job job;
         try

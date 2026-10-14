@@ -91,6 +91,9 @@ public class JobRunnerTests
             return Task.FromResult("accepted");
         }
         public Task FailedAsync(Guid id, FailureBody body, CancellationToken ct) { Failures.Add((id, body)); return Task.CompletedTask; }
+        public Task<JobEnvelope?> CheckUpdateAsync(string platform, CancellationToken ct) => Task.FromResult<JobEnvelope?>(null);
+        public Task DownloadReleaseAsync(string version, string platform, Stream destination, long maxBytes, CancellationToken ct) => Task.CompletedTask;
+        public Task ReportUpdateAsync(string version, string status, string error, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class FakeExecutor : IQueryExecutor

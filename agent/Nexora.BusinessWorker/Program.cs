@@ -10,6 +10,20 @@ options.WorkerId = Environment.GetEnvironmentVariable("NEXORA_BW_WORKER_ID") ?? 
 options.SigningPublicKey = Environment.GetEnvironmentVariable("NEXORA_BW_SIGNING_KEY") ?? options.SigningPublicKey;
 if (Environment.GetEnvironmentVariable("NEXORA_BW_POLL_SECONDS") is { } poll && int.TryParse(poll, out var pollSeconds)) options.PollSeconds = pollSeconds;
 if (Environment.GetEnvironmentVariable("NEXORA_BW_ALLOW_PLAINTEXT_LOOPBACK_DB") == "1") options.AllowPlaintextLoopbackDatabase = true;
+options.UpdateDirectory = Environment.GetEnvironmentVariable("NEXORA_BW_UPDATE_DIRECTORY") ?? options.UpdateDirectory;
+if (Environment.GetEnvironmentVariable("NEXORA_BW_UPDATE_CHECK_MINUTES") is { } checkMinutes && int.TryParse(checkMinutes, out var minutes)) options.UpdateCheckMinutes = minutes;
+if (Environment.GetEnvironmentVariable("NEXORA_BW_UPDATE_CHECK_SECONDS") is { } checkSeconds && int.TryParse(checkSeconds, out var seconds)) options.UpdateCheckSecondsOverride = seconds;
+if (Environment.GetEnvironmentVariable("NEXORA_BW_UPDATE_START_DELAY_SECONDS") is { } startDelay && int.TryParse(startDelay, out var delaySeconds)) options.UpdateStartDelaySeconds = delaySeconds;
+
+if (args.Length >= 2 && args[0] == "--verify-staged")
+{
+    // Used by the installer apply scripts (as the trusted, currently installed binary): "ok" or a stable failure code.
+    options.UpdateDirectory = args[1];
+    var verdict = UpdateStager.VerifyStaged(options, Path.Combine(args[1], "ready"), DateTimeOffset.UtcNow, WorkerOptions.Version);
+    Console.WriteLine(verdict);
+    return verdict == "ok" ? 0 : 3;
+}
+if (args.Length >= 1 && args[0] == "--version") { Console.WriteLine(WorkerOptions.Version); return 0; }
 
 var problems = options.Validate();
 var secrets = new SecretResolver(options);
@@ -34,7 +48,10 @@ builder.Services.AddSingleton(secrets);
 builder.Services.AddSingleton<ICentralApi>(_ => new CentralApi(new HttpClient(), options, token!));
 builder.Services.AddSingleton<IQueryExecutor, DbQueryExecutor>();
 builder.Services.AddSingleton<JobRunner>();
+builder.Services.AddSingleton<UpdateGate>();
+builder.Services.AddSingleton<UpdateStager>();
+builder.Services.AddHostedService<UpdateService>();
 builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddHostedService<JobPollingService>();
 await builder.Build().RunAsync();
-return 0;
+return Environment.ExitCode;  // 75 when the worker stopped itself to apply a staged update

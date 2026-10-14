@@ -12,6 +12,9 @@ const stateLabel = {ACTIVE: 'Ativo', DRAFT: 'Rascunho', SUSPENDED: 'Suspenso', D
   EXPIRED: 'Expirado', CANCELED: 'Cancelado', PENDING: 'Aguardando', LEASED: 'Reservado', RUNNING: 'Executando', TESTED: 'Testada',
   PUBLISHED: 'Publicada', SUPERSEDED: 'Substituída', REVOKED_R: 'Revogada'};
 const label = (v) => stateLabel[v] || v || '—';
+const ringLabel = {canary: 'Canário', stable: 'Estável', hold: 'Retido'};
+const updateLabel = {DOWNLOADED: 'Baixada', APPLIED: 'Aplicada', FAILED: 'Falhou', ROLLED_BACK: 'Revertida'};
+const channelLabel = {canary: 'Canário', stable: 'Estável', revoked: 'Revogada'};
 const METRICS = [['row_count', 'Quantidade de linhas'], ['sum', 'Soma de uma coluna'], ['max', 'Máximo de uma coluna'],
   ['count_nonnull', 'Valores não nulos de uma coluna'], ['first_value', 'Primeiro valor de uma coluna']];
 
@@ -72,6 +75,8 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       else if (page === 'fontes') {
         data.items = await call.current('/api/v1/master/business/data-sources');
         if (segments[0] === 'novo') data.workers = (await call.current('/api/v1/master/business/workers')).filter(w => w.status !== 'REVOKED');
+      } else if (page === 'atualizacoes') {
+        data.items = await call.current('/api/v1/master/business/releases');
       } else if (page === 'filas') {
         data.broker = await call.current('/api/v1/master/business/broker/status');
         data.items = await call.current('/api/v1/master/business/broker/dead-letters');
@@ -274,6 +279,17 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
           <FormActions onCancel={() => navigate('workers')} submitting={busy} submitLabel="Criar worker"/>
         </form></FormPage>;
     }
+    if (segments[0] && sub === 'anel') {
+      const worker = items.find(w => w.id === segments[0]);
+      return <FormPage title={`Anel de atualização${worker ? ` — ${worker.name}` : ''}`} description="Canário recebe versões novas primeiro; Estável só recebe versões já promovidas; Retido congela o worker na versão atual." onBack={() => navigate('workers')}>
+        {alerts}
+        <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const ring = new FormData(e.currentTarget).get('ring');
+          run(() => call.current(`/api/v1/master/business/workers/${segments[0]}/update-ring`, {method: 'PUT', body: JSON.stringify({ring})}), () => navigate('workers')); }}>
+          <FormSection title="Anel"><label className="field"><span>Anel</span><select name="ring" defaultValue={worker?.update_ring || 'stable'}>
+            {Object.entries(ringLabel).map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label></FormSection>
+          <FormActions onCancel={() => navigate('workers')} submitting={busy} submitLabel="Salvar anel"/>
+        </form></FormPage>;
+    }
     if (segments[0] && sub === 'revogar') {
       const worker = items.find(w => w.id === segments[0]);
       return <FormPage title={`Revogar worker${worker ? ` — ${worker.name}` : ''}`} description="O token deixa de valer imediatamente e as execuções pendentes são canceladas. Não há como reativar: crie outro worker." onBack={() => navigate('workers')}>
@@ -294,8 +310,12 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       {alerts}
       <DataGrid stateKey={`business:${tenantId}:workers`} rows={filtered} columns={[{key: 'name', label: 'Worker'}, {key: 'status', label: 'Situação', render: r => badge(r.status)},
         {key: 'version', label: 'Versão'}, {key: 'last_heartbeat_at', label: 'Último sinal', render: r => fmt(r.last_heartbeat_at)}, {key: 'capacity', label: 'Capacidade'},
-        {key: 'active_jobs', label: 'Em execução'}, {key: 'queued_jobs', label: 'Na fila'}, {key: 'sources', label: 'Fontes'}]}
-        actions={(r) => r.status !== 'REVOKED' ? <button type="button" onClick={() => navigate(`workers/${r.id}/revogar`)}>Revogar</button> : null}/>
+        {key: 'active_jobs', label: 'Em execução'}, {key: 'queued_jobs', label: 'Na fila'}, {key: 'sources', label: 'Fontes'},
+        {key: 'update_ring', label: 'Anel de atualização', render: r => ringLabel[r.update_ring] || '—'},
+        {key: 'update_status', label: 'Última atualização', render: r => r.update_status ? `${updateLabel[r.update_status] || r.update_status} ${r.update_version || ''}` : '—'}]}
+        actions={(r) => r.status !== 'REVOKED' ? <>
+          <button type="button" onClick={() => navigate(`workers/${r.id}/anel`)}>Editar anel</button>
+          <button type="button" onClick={() => navigate(`workers/${r.id}/revogar`)}>Revogar</button></> : null}/>
     </ListPage>;
   }
 
@@ -319,6 +339,49 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       {alerts}
       <DataGrid stateKey={`business:${tenantId}:fontes`} rows={filtered} columns={[{key: 'name', label: 'Fonte'}, {key: 'dialect', label: 'Banco'}, {key: 'database_ref', label: 'Nome lógico'},
         {key: 'worker_name', label: 'Worker', render: r => <>{r.worker_name} {badge(r.worker_status)}</>}, {key: 'active', label: 'Ativa', render: r => r.active ? 'Sim' : 'Não'}]}/>
+    </ListPage>;
+  }
+
+  // ------------------------------------------------------------------ Atualizações (signed releases, canary ring)
+  if (page === 'atualizacoes') {
+    if (!isMaster) return <section className="panel"><h2>Acesso não autorizado</h2><p>As versões do Business Worker são administradas pelo Master técnico.</p></section>;
+    const release = items.find(r => r.id === segments[0]);
+    if (segments[0] === 'novo') return <FormPage title="Registrar versão do Worker" description="O pacote já deve estar na pasta releases do servidor (copiado pela operação). O servidor calcula o SHA-256 e a versão nasce no canal Canário." onBack={() => navigate('atualizacoes')}>
+      {alerts}
+      <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+        run(() => call.current('/api/v1/master/business/releases', post({version: f.version, platform: f.platform, file_name: f.file_name, notes: f.notes})), () => navigate('atualizacoes')); }}>
+        <FormSection title="Pacote">
+          <Field name="version" label="Versão (ex.: 1.2.0)" required pattern="[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}" title="Use o formato 1.2.0"/>
+          <label className="field"><span>Plataforma</span><select name="platform" defaultValue="linux-x64"><option value="linux-x64">Linux x64</option><option value="win-x64">Windows x64</option></select></label>
+          <Field name="file_name" label="Nome do arquivo na pasta releases" required pattern="[A-Za-z0-9._-]{1,120}" title="Somente letras, números, ponto, hífen e sublinhado"/>
+          <Field name="notes" label="Observações (opcional)" maxLength="500"/></FormSection>
+        <FormActions onCancel={() => navigate('atualizacoes')} submitting={busy} submitLabel="Registrar versão"/>
+      </form></FormPage>;
+    if (segments[0] && ['promover', 'revogar'].includes(segments[1])) {
+      const promote = segments[1] === 'promover';
+      return <FormPage title={`${promote ? 'Promover' : 'Revogar'} versão${release ? ` ${release.version} (${release.platform})` : ''}`}
+        description={promote ? 'Promover libera a versão para todos os workers fora de retenção. Exige ao menos um worker canário online que já aplicou esta versão.'
+          : 'Revogar impede novas ofertas e manda os workers que a executam voltarem à última versão estável.'} onBack={() => navigate('atualizacoes')}>
+        {alerts}
+        <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const reason = new FormData(e.currentTarget).get('reason');
+          run(() => call.current(`/api/v1/master/business/releases/${segments[0]}/${promote ? 'promote' : 'revoke'}`, post(promote ? {} : {reason})), () => navigate('atualizacoes')); }}>
+          <FormSection title="Confirmação">{promote ? <p>Confirme a promoção. A decisão fica em auditoria.</p>
+            : <Field name="reason" label="Motivo (de 4 a 300 caracteres)" required minLength="4" maxLength="300"/>}</FormSection>
+          <FormActions onCancel={() => navigate('atualizacoes')} submitting={busy} submitLabel={promote ? 'Promover versão' : 'Revogar versão'}/>
+        </form></FormPage>;
+    }
+    return <ListPage {...header('Atualizações do Worker', 'Versões assinadas do Business Worker. Entram como Canário; só viram Estável depois de aplicadas com sucesso por um worker canário.')}
+      actions={<button type="button" className="primary" onClick={() => navigate('atualizacoes/novo')}>+ Registrar versão</button>}
+      metrics={<MetricGroup items={[{label: 'Versões', value: busy ? '—' : items.length}, {label: 'Canário', value: items.filter(r => r.channel === 'canary').length},
+        {label: 'Estável', value: items.filter(r => r.channel === 'stable').length}, {label: 'Revogadas', value: items.filter(r => r.channel === 'revoked').length}]}/>}
+      filters={<FilterBar><label>Pesquisar <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Versão ou arquivo"/></label><button type="button" onClick={load} disabled={busy}>Atualizar</button></FilterBar>}>
+      {alerts}
+      <DataGrid stateKey={`business:${tenantId}:atualizacoes`} rows={items.filter(r => `${r.version} ${r.file_name}`.toLowerCase().includes(search.toLowerCase()))}
+        columns={[{key: 'version', label: 'Versão'}, {key: 'platform', label: 'Plataforma'}, {key: 'channel', label: 'Canal', render: r => channelLabel[r.channel] || r.channel},
+          {key: 'size_bytes', label: 'Tamanho', render: r => `${(r.size_bytes / 1048576).toFixed(1)} MB`}, {key: 'sha256', label: 'SHA-256', render: r => <code title={r.sha256}>{String(r.sha256).slice(0, 12)}…</code>},
+          {key: 'created_at', label: 'Registrada', render: r => fmt(r.created_at)}]}
+        actions={(r) => <>{r.channel === 'canary' && <button type="button" onClick={() => navigate(`atualizacoes/${r.id}/promover`)}>Ativar versão</button>}
+          {r.channel !== 'revoked' && <button type="button" onClick={() => navigate(`atualizacoes/${r.id}/revogar`)}>Revogar</button>}</>}/>
     </ListPage>;
   }
 

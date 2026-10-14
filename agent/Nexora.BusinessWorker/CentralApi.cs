@@ -20,6 +20,11 @@ public interface ICentralApi
     /// <summary>Returns the central verdict: accepted, duplicate or rejected.</summary>
     Task<string> ResultAsync(Guid executionId, ResultBody body, CancellationToken ct);
     Task FailedAsync(Guid executionId, FailureBody body, CancellationToken ct);
+    /// <summary>Signed update offer for this worker, or null when it is up to date, on hold or not eligible.</summary>
+    Task<JobEnvelope?> CheckUpdateAsync(string platform, CancellationToken ct);
+    /// <summary>Streams the offered package; refuses to write more than <paramref name="maxBytes"/>.</summary>
+    Task DownloadReleaseAsync(string version, string platform, Stream destination, long maxBytes, CancellationToken ct);
+    Task ReportUpdateAsync(string version, string status, string error, CancellationToken ct);
 }
 
 public sealed class CentralApi : ICentralApi
@@ -90,5 +95,35 @@ public sealed class CentralApi : ICentralApi
     public async Task FailedAsync(Guid executionId, FailureBody body, CancellationToken ct)
     {
         using var _ = await SendAsync(HttpMethod.Post, $"api/v1/agents/business/jobs/{executionId}/failed", body, ct);
+    }
+
+    public async Task<JobEnvelope?> CheckUpdateAsync(string platform, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, $"api/v1/agents/business/update?platform={Uri.EscapeDataString(platform)}", null, ct);
+        var offer = await response.Content.ReadFromJsonAsync<UpdateOffer>(cancellationToken: ct);
+        return offer?.Update;
+    }
+
+    public async Task DownloadReleaseAsync(string version, string platform, Stream destination, long maxBytes, CancellationToken ct)
+    {
+        using var request = Request(HttpMethod.Get, $"api/v1/agents/business/releases/{Uri.EscapeDataString(version)}/{Uri.EscapeDataString(platform)}/download");
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode) throw new CentralApiException(response.StatusCode);
+        await using var body = await response.Content.ReadAsStreamAsync(ct);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await body.ReadAsync(buffer, ct)) > 0)
+        {
+            total += read;
+            if (total > maxBytes) throw new UpdateRejectedException("size_mismatch");  // never write more than the manifest promised
+            await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+        }
+    }
+
+    public async Task ReportUpdateAsync(string version, string status, string error, CancellationToken ct)
+    {
+        using var _ = await SendAsync(HttpMethod.Post, "api/v1/agents/business/update/status",
+            new { version, status, error = error.Length > 200 ? error[..200] : error }, ct);
     }
 }

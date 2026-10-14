@@ -19,6 +19,15 @@ public sealed class WorkerOptions
     public bool AllowPlaintextLoopbackDatabase { get; set; }
     /// <summary>SQL types without a zone (datetime) are read as UTC when true, otherwise as server-local time.</summary>
     public bool AssumeUtcForUnspecified { get; set; } = true;
+    /// <summary>Minutes between update checks; 0 turns remote update off (the worker still works and never changes itself).</summary>
+    public int UpdateCheckMinutes { get; set; } = 10;
+    /// <summary>Writable folder for staged packages (the installers point it at the service's state directory).</summary>
+    public string UpdateDirectory { get; set; } = "";
+    /// <summary>Seconds before the first update check (plus up to 30 s of jitter). Lowered only in tests.</summary>
+    public int UpdateStartDelaySeconds { get; set; } = 30;
+    /// <summary>When above 0, replaces <see cref="UpdateCheckMinutes"/> with this many seconds. Tests only.</summary>
+    public int UpdateCheckSecondsOverride { get; set; }
+    public string EffectiveUpdateDirectory => string.IsNullOrWhiteSpace(UpdateDirectory) ? Path.Combine(AppContext.BaseDirectory, "updates") : UpdateDirectory;
 
     public static string Version => typeof(WorkerOptions).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -33,6 +42,7 @@ public sealed class WorkerOptions
         if (string.IsNullOrWhiteSpace(SigningPublicKey)) problems.Add("Nexora:SigningPublicKey is required (pin the key at install time).");
         if (PollSeconds is < 5 or > 60) problems.Add("Nexora:PollSeconds must be between 5 and 60.");
         if (HeartbeatSeconds is < 10 or > 120) problems.Add("Nexora:HeartbeatSeconds must be between 10 and 120.");
+        if (UpdateCheckMinutes != 0 && (UpdateCheckMinutes < 5 || UpdateCheckMinutes > 1440)) problems.Add("Nexora:UpdateCheckMinutes must be 0 (off) or between 5 and 1440.");
         return problems;
     }
 }
