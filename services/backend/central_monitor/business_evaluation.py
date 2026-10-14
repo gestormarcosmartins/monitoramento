@@ -3,6 +3,7 @@
 Business incident lifecycle intentionally differs from GLPI ticket lifecycle.
 """
 from __future__ import annotations
+import logging
 from datetime import UTC,datetime,timedelta
 from decimal import Decimal
 from typing import Any
@@ -12,6 +13,7 @@ from zoneinfo import ZoneInfo
 from .business_glpi_outbox import enqueue
 from .business_rules import evaluate
 
+logger=logging.getLogger(__name__)
 VALID_STATES={'normal','atencao','critico','sem_dados','suspenso'}
 
 
@@ -91,7 +93,7 @@ def apply_evaluation(db:Any,tenant_id:str,indicator:dict[str,Any],now:datetime)-
         state_changed_at=CASE WHEN cm_business_states.state IS DISTINCT FROM excluded.state
           THEN excluded.evaluated_at ELSE cm_business_states.state_changed_at END''',
         (tenant_id,indicator['id'],state,now))
-    if policy and policy['active'] and (state!=prev or state=='sem_dados'):
+    if policy and policy['active'] and state!=prev:  # one row per transition, never per cycle
         db.execute('''INSERT INTO cm_business_rule_evaluations
             (tenant_id,rule_id,rule_version,indicator_id,state,reason,value,evaluated_at)
             VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',
@@ -127,13 +129,27 @@ def evaluate_business_tenants(connect:Any,tenant_connection:Any)->dict[str,int]:
     """Invoked by existing Nexora worker. Periodically catches stale or changed rules."""
     with connect() as db:
         tenants=[str(row['id']) for row in db.execute('SELECT id FROM cm_tenants WHERE active').fetchall()]
-    counts={'companies':0,'indicators':0}
+    counts={'companies':0,'indicators':0,'failed':0}
     for tenant_id in tenants:
-        with tenant_connection(tenant_id) as db:
-            flag=db.execute("SELECT mode FROM cm_feature_flags WHERE tenant_id=%s AND feature='business_monitor'",(tenant_id,)).fetchone()
-            if not flag or flag['mode'] not in ('enabled','write_pilot'): continue
+        try:
+            with tenant_connection(tenant_id) as db:
+                flag=db.execute("SELECT mode FROM cm_feature_flags WHERE tenant_id=%s AND feature='business_monitor'",(tenant_id,)).fetchone()
+                if not flag or flag['mode'] not in ('enabled','write_pilot'): continue
+                ids=[r['id'] for r in db.execute('SELECT id FROM cm_business_indicators WHERE tenant_id=%s',(tenant_id,)).fetchall()]
             counts['companies']+=1
-            for indicator in db.execute('''SELECT * FROM cm_business_indicators WHERE tenant_id=%s''',(tenant_id,)).fetchall():
-                apply_evaluation(db,tenant_id,indicator,datetime.now(UTC))
-                counts['indicators']+=1
+        except Exception:
+            logger.exception('business_evaluation_tenant_failed',extra={'tenant_id':tenant_id})
+            counts['failed']+=1
+            continue
+        for indicator_id in ids:
+            # Own transaction per indicator: one bad rule never blocks the others or other companies.
+            try:
+                with tenant_connection(tenant_id) as db:
+                    indicator=db.execute('SELECT * FROM cm_business_indicators WHERE tenant_id=%s AND id=%s',(tenant_id,indicator_id)).fetchone()
+                    if indicator:
+                        apply_evaluation(db,tenant_id,indicator,datetime.now(UTC))
+                        counts['indicators']+=1
+            except Exception:
+                logger.exception('business_evaluation_indicator_failed',extra={'tenant_id':tenant_id,'indicator_id':str(indicator_id)})
+                counts['failed']+=1
     return counts

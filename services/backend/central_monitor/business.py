@@ -297,6 +297,9 @@ def edit_indicator(indicator_id: UUID,payload: IndicatorEdit,tenant_id: str=Depe
         current=_indicator_row(db,tenant_id,indicator_id,actor,scope)
         if current['active'] != payload.active and 'business.monitor.inactivate' not in _permissions(db,tenant_id,actor['id']):
             raise HTTPException(403,'Inactivation requires a separate permission')
+        if payload.code!=current['code'] and db.execute("SELECT 1 FROM cm_business_indicators WHERE tenant_id=%s AND code=%s AND id<>%s",
+                (tenant_id,payload.code,indicator_id)).fetchone():
+            raise HTTPException(409,"Indicator code already exists in this company")
         row=db.execute("""UPDATE cm_business_indicators SET code=%s,name=%s,description=%s,unit=%s,direction=%s,
           warning_value=%s,critical_value=%s,stale_after_seconds=%s,active=%s,version=version+1,updated_at=now()
           WHERE tenant_id=%s AND id=%s AND version=%s RETURNING *""",
