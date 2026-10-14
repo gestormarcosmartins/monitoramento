@@ -60,6 +60,10 @@ after = broker.stats([worker])["dlq_depth"]
 check(after == before + 1, "reject dead-letters the message into business.jobs.dlq")
 listed = [m for m in broker.peek_dlq(200) if m.get("execution_id") == message["execution_id"]]
 check(bool(listed) and listed[0]["reason"] == "rejected", "peek shows the dead letter with its reason")
+other = broker.discard_dlq(str(uuid.uuid4()), message["execution_id"])
+check(other == 0, "discard never touches another company's dead letter")
+check(broker.discard_dlq(tenant, message["execution_id"]) >= 1, "discard removes this execution's dead letters")
+check(not [m for m in broker.peek_dlq(200) if m.get("execution_id") == message["execution_id"]], "the dead letter is gone after discard")
 
 broker.publish({**message, "execution_id": str(uuid.uuid4())}, worker, 1_000)  # 1 s TTL
 time.sleep(3)

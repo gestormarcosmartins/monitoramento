@@ -59,6 +59,7 @@ class JobBroker(Protocol):
     def consume(self, worker_id: Any, limit: int) -> Any: ...  # context manager yielding list[Delivery]
     def stats(self, worker_ids: list[Any]) -> dict[str, Any]: ...
     def peek_dlq(self, limit: int) -> list[dict[str, Any]]: ...
+    def discard_dlq(self, tenant_id: str, execution_id: str) -> int: ...  # removes that execution's dead letters, returns how many
 
 
 class RabbitJobBroker:
@@ -166,6 +167,28 @@ class RabbitJobBroker:
                 channel.basic_nack(tag, requeue=True)  # peek only: messages stay in the DLQ
         return out
 
+    def discard_dlq(self, tenant_id: str, execution_id: str) -> int:
+        """Remove this execution's dead letters (after a reprocess or an explicit discard). Others stay untouched."""
+        removed = 0
+        with self._channel() as channel:
+            keep = []
+            for _ in range(500):
+                method, _props, body = channel.basic_get(DLQ, auto_ack=False)
+                if method is None:
+                    break
+                try:
+                    payload = json.loads(body)
+                except ValueError:
+                    payload = {}
+                if str(payload.get("tenant_id")) == str(tenant_id) and str(payload.get("execution_id")) == str(execution_id):
+                    channel.basic_ack(method.delivery_tag)
+                    removed += 1
+                else:
+                    keep.append(method.delivery_tag)
+            for tag in keep:
+                channel.basic_nack(tag, requeue=True)
+        return removed
+
 
 class InMemoryJobBroker:
     """Test double with the same contract (ordered per-worker queues, DLQ, confirmed publish)."""
@@ -197,6 +220,12 @@ class InMemoryJobBroker:
 
     def peek_dlq(self, limit: int) -> list[dict[str, Any]]:
         return [{"execution_id": b.get("execution_id"), "tenant_id": b.get("tenant_id"), "reason": "rejected", "queue": None} for b in self.dlq[:limit]]
+
+
+    def discard_dlq(self, tenant_id: str, execution_id: str) -> int:
+        before = len(self.dlq)
+        self.dlq = [b for b in self.dlq if not (str(b.get("tenant_id")) == str(tenant_id) and str(b.get("execution_id")) == str(execution_id))]
+        return before - len(self.dlq)
 
 
 _override: JobBroker | None = None

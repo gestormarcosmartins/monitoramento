@@ -22,7 +22,7 @@ if URL:
     })
     from fastapi import HTTPException
     from central_monitor import business, business_monitors as bm, business_results as br, db, expo_push as ep
-    from central_monitor import business_broker, worker as cm_worker
+    from central_monitor import business_broker, business_governance as bg, worker as cm_worker
     from central_monitor.auth import Identity
     from central_monitor.db import connect, tenant_connection
     from central_monitor.main import ensure_user
@@ -129,6 +129,33 @@ class PostgresFlows(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             bm.publish_revision(monitor["id"], 1, self.A, self.master_ident)
         self.assertEqual(ctx.exception.status_code, 409)
+
+
+    # ------------------------------------------------------------------ Master governance views (metadata only)
+    def test_master_views_expose_metadata_without_business_rows(self):
+        worker, monitor, auth = self.setup_monitor()
+        self.publish(monitor, auth)
+        workers = bg.list_workers_for_master(self.A, self.master_ident)
+        self.assertTrue(any(str(w["id"]) == str(worker["id"]) and w["sources"] == 1 for w in workers))
+        monitors = bg.list_monitors_for_master(self.A, self.master_ident)
+        mine = next(m for m in monitors if str(m["id"]) == str(monitor["id"]))
+        self.assertEqual((mine["status"], mine["published_revision"], mine["dialect"]), ("ACTIVE", 1, "sqlserver"))
+        detail = bg.monitor_revisions(monitor["id"], self.A, self.master_ident)
+        revision = detail["revisions"][0]
+        self.assertEqual((revision["state"], revision["test_state"]), ("PUBLISHED", "SUCCEEDED"))
+        self.assertIn("@hoje", revision["query_text"])
+        meta = bg.execution_metadata(uuid.UUID(str(revision["test_execution_id"])), self.A, self.master_ident)
+        self.assertNotIn("rows", meta)
+        self.assertEqual([c["name"] for c in meta["columns"]], ["documento", "valor_vencido"])  # names and types only
+        for call in (lambda: bg.list_workers_for_master(self.A, self.user_ident), lambda: bg.list_monitors_for_master(self.A, self.user_ident),
+                     lambda: bg.monitor_revisions(monitor["id"], self.A, self.user_ident),
+                     lambda: bg.execution_metadata(uuid.UUID(str(revision["test_execution_id"])), self.A, self.user_ident)):
+            with self.assertRaises(HTTPException) as ctx:
+                call()
+            self.assertEqual(ctx.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as ctx:  # another company's id is the same neutral 404
+            bg.execution_metadata(uuid.UUID(str(revision["test_execution_id"])), self.B, self.master_ident)
+        self.assertIn(ctx.exception.status_code, (403, 404))
 
     # ------------------------------------------------------------------ full cycle (H04/H07/H12)
     def test_full_cycle_feeds_indicator_once_and_is_idempotent(self):
@@ -369,6 +396,60 @@ class BrokerMode(PostgresFlows):
         self.assertEqual(bm.broker_status(self.A, self.master_ident)["mode"], "memory")
         with self.assertRaises(HTTPException):
             bm.broker_status(self.A, self.user_ident)
+
+
+    # ------------------------------------------------------------------ dead-letter reprocess / discard
+    def dead_letter(self, execution_id, state="EXPIRED"):
+        with tenant_connection(self.A) as c:
+            c.execute("UPDATE cm_business_executions SET state=%s,finished_at=now(),error_code='missed_window' WHERE id=%s", (state, execution_id))
+        self.broker.dlq.append({"execution_id": str(execution_id), "tenant_id": self.A})
+
+    def test_reprocess_creates_a_new_execution_and_clears_the_dead_letter(self):
+        worker, monitor, auth = self.setup_monitor()
+        self.publish(monitor, auth)
+        bm.run_scheduler(connect)
+        job = self.claim_one(auth)
+        old = uuid.UUID(job["execution_id"])
+        self.dead_letter(old, "FAILED")
+        body = bg.DeadLetterAction(reason="reenvio apos queda do broker")
+        outcome = bg.reprocess_dead_letter(old, body, self.A, self.master_ident)
+        self.assertEqual(outcome["dead_letters_removed"], 1)
+        self.assertEqual(self.broker.stats([worker["id"]])["dlq_depth"], 0)
+        again = self.claim_one(auth)
+        self.assertEqual(again["execution_id"], str(outcome["execution_id"]))
+        self.assertNotEqual(again["execution_id"], job["execution_id"])
+        self.assertEqual(self.exec_state(old)["state"], "FAILED")  # the old one stays as evidence
+        with self.assertRaises(HTTPException) as ctx:  # one in flight now
+            bg.reprocess_dead_letter(old, body, self.A, self.master_ident)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_reprocess_refuses_when_the_monitor_would_not_run_it(self):
+        worker, monitor, auth = self.setup_monitor()
+        self.publish(monitor, auth)
+        bm.run_scheduler(connect)
+        job = self.claim_one(auth)
+        eid = uuid.UUID(job["execution_id"])
+        self.dead_letter(eid)
+        bm.change_status(monitor["id"], bm.StatusChange(action="suspend", reason="manutencao"), self.A, self.master_ident)
+        with self.assertRaises(HTTPException) as ctx:
+            bg.reprocess_dead_letter(eid, bg.DeadLetterAction(reason="tentativa"), self.A, self.master_ident)
+        self.assertEqual(ctx.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as ctx:  # finished executions are not reprocessable
+            with tenant_connection(self.A) as c:
+                c.execute("UPDATE cm_business_executions SET state='SUCCEEDED' WHERE id=%s", (eid,))
+            bg.reprocess_dead_letter(eid, bg.DeadLetterAction(reason="tentativa"), self.A, self.master_ident)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_discard_removes_only_that_execution_and_requires_master(self):
+        worker, monitor, auth = self.setup_monitor()
+        keep, drop = uuid.uuid4(), uuid.uuid4()
+        self.broker.dlq.extend([{"execution_id": str(keep), "tenant_id": self.A}, {"execution_id": str(drop), "tenant_id": self.A},
+                                {"execution_id": str(drop), "tenant_id": self.B}])
+        with self.assertRaises(HTTPException) as ctx:
+            bg.discard_dead_letter(drop, bg.DeadLetterAction(reason="descarte"), self.A, self.user_ident)
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(bg.discard_dead_letter(drop, bg.DeadLetterAction(reason="descarte"), self.A, self.master_ident)["dead_letters_removed"], 1)
+        self.assertEqual({(b["execution_id"], b["tenant_id"]) for b in self.broker.dlq}, {(str(keep), self.A), (str(drop), self.B)})
 
 
 if __name__ == "__main__":
