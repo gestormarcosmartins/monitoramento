@@ -32,7 +32,6 @@ from .agent_api import router as agent_router
 from .business import router as business_router, agent_router as business_agent_router
 from .business_p1 import router as business_p1_router
 from .business_glpi import router as business_glpi_router
-from .expo_push import router as expo_push_router
 from .business_monitors import master_router as business_monitor_master_router
 from .business_governance import master_router as business_governance_router
 from .business_releases import master_router as business_releases_master_router
@@ -51,6 +50,7 @@ from .governance import router as governance_router
 from .integrations import router as integrations_router
 from .reconciliation import router as reconciliation_router
 from .push import router as push_router
+from .expo_push import router as expo_push_router
 from .app_incident_api import router as app_incident_router
 from .command_bus import canonical_payload_hash
 from .access_scope import incident_scope
@@ -79,7 +79,6 @@ app.include_router(business_router)
 app.include_router(business_agent_router)
 app.include_router(business_p1_router)
 app.include_router(business_glpi_router)
-app.include_router(expo_push_router)
 app.include_router(business_monitor_master_router)
 app.include_router(business_governance_router)
 app.include_router(business_releases_master_router)
@@ -100,6 +99,7 @@ app.include_router(governance_router)
 app.include_router(integrations_router)
 app.include_router(reconciliation_router)
 app.include_router(push_router)
+app.include_router(expo_push_router)
 app.include_router(app_incident_router)
 
 

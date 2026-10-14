@@ -52,7 +52,7 @@ with psycopg.connect(f"postgresql://postgres:@{host_port}/erp_demo", autocommit=
 signing_seed = base64.b64encode(os.urandom(32)).decode()
 env = dict(os.environ, CENTRAL_DATABASE_URL=f"postgresql://central_app:pw@{host_port}/central_monitor", REDIS_URL="redis://localhost:6399/0",
            CENTRAL_SECRET_KEY="x" * 40, ZABBIX_API_URL="http://z", ZABBIX_API_TOKEN="t", BUSINESS_SIGNING_KEY=signing_seed,
-           PUSH_TOKEN_KEY=base64.urlsafe_b64encode(os.urandom(32)).decode(), PYTHONPATH=str(ROOT / "services" / "backend"))
+           PYTHONPATH=str(ROOT / "services" / "backend"))
 os.environ.update(env)
 
 from central_monitor import business, business_monitors as bm, db  # noqa: E402

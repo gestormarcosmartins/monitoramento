@@ -12,7 +12,8 @@ const has = (perms, cap) => perms.includes(cap);
 
 /** Master-only bootstrap: no screen can be reachable before this, since the UI itself
  * requires a grant to render (no implicit access, not even for the technical Master). */
-function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
+function BusinessBootstrap({tenantId, request, access, isMaster, currentUserId, ui, onDone}) {
+  const {FormSection, FormActions} = ui;
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const [users,setUsers]=useState([]);
@@ -38,6 +39,9 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
       await onDone();
     }catch(e){setMessage(e.message||'Falha ao conceder acesso');}finally{setBusy(false);}
   };
+  // The technical Master cannot self-grant (server enforces this too); offering themselves
+  // in the list would just produce a confusing 403 after filling out the whole form.
+  const eligible=users.filter(u=>String(u.id)!==String(currentUserId));
   return <section className="panel">
     <h2>Ativação do Monitoramento de Negócios</h2>
     <p>Produto independente, sem acesso implícito: o Master técnico pode ativar e indicar o primeiro administrador, mas não pode conceder acesso a si mesmo.</p>
@@ -52,19 +56,23 @@ function BusinessBootstrap({tenantId, request, access, isMaster, onDone}) {
     {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {!access.enabled ? (
       <form className="nexora-form" onSubmit={enable}>
-        <label className="field"><span>Motivo da ativação</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: piloto comercial aprovado"/></label>
-        <div className="form-actions"><button className="primary" disabled={busy}>{busy?'Ativando...':'Ativar para esta Empresa'}</button></div>
+        <FormSection title="Ativação">
+          <label className="field"><span>Motivo da ativação</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: piloto comercial aprovado"/></label>
+        </FormSection>
+        <FormActions submitLabel={busy?'Ativando...':'Ativar para esta Empresa'} submitting={busy}/>
       </form>
     ) : (
       <>
         <p className="info-banner">Produto já ativado para esta Empresa. Indique um usuário para ser o primeiro administrador de negócios (ele poderá conceder acesso a outros, inclusive a você).</p>
-        <form className="nexora-form bm-bootstrap-form" onSubmit={grant}>
-          <label className="field"><span>Usuário</span><select name="user_id" required defaultValue="">
-            <option value="" disabled>Selecione</option>
-            {users.map(u=><option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
-          </select></label>
-          <label className="field"><span>Motivo</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: responsável pelo módulo de negócios"/></label>
-          <div className="form-actions"><button className="primary" disabled={busy || !users.length}>{busy?'Concedendo...':'Conceder administração de negócios'}</button></div>
+        <form className="nexora-form" onSubmit={grant}>
+          <FormSection title="Primeiro administrador">
+            <label className="field"><span>Usuário</span><select name="user_id" required defaultValue="">
+              <option value="" disabled>Selecione</option>
+              {eligible.map(u=><option key={u.id} value={u.id}>{u.display_name} — {u.email}</option>)}
+            </select></label>
+            <label className="field"><span>Motivo</span><input name="reason" required minLength="4" maxLength="500" placeholder="Ex.: responsável pelo módulo de negócios"/></label>
+          </FormSection>
+          <FormActions submitLabel={busy?'Concedendo...':'Conceder administração de negócios'} submitting={busy || !eligible.length}/>
         </form>
         {admins.length>0 && <div className="bm-admins"><h3>Administradores de negócios desta Empresa</h3>
           <ul>{admins.map(a=><li key={a.user_id}><strong>{a.display_name}</strong> — {a.email} <small>(desde {fmt(a.granted_at)})</small></li>)}</ul></div>}
@@ -96,7 +104,7 @@ function MasterQuickGrant({request, ui}) {
   </section>;
 }
 
-export default function BusinessMonitor({tenantId, request, access, isMaster, onAccessChange, ui}) {
+export default function BusinessMonitor({tenantId, request, access, isMaster, currentUserId, onAccessChange, ui}) {
   const {PageHeader, MetricGroup, ListPage, FilterBar, DataGrid, FormPage, FormSection, FormActions} = ui;
   const [page, setPage] = useState(routeName());
   const [indicators,setIndicators]=useState([]);
@@ -141,7 +149,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
     return <div className="nexora-business">
       <nav className="bm-tabs" aria-label="Governança de consultas do Monitoramento de Negócios">{tabs.map(([key,text])=>
         <button key={key} type="button" aria-current={current===key?'page':undefined} className={current===key?'active':''} onClick={()=>navigate(key)}>{text}</button>)}</nav>
-      {current==='acesso'?<BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} onDone={onAccessChange}/>
+      {current==='acesso'?<BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} currentUserId={currentUserId} ui={ui} onDone={onAccessChange}/>
         :current==='permissoes'?<BusinessP1 page="permissoes" tenantId={tenantId} access={access} request={requestRef.current} ui={ui}/>
         :<BusinessQueries page={current} tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} ui={ui} navigate={navigate}/>}
     </div>;
@@ -155,7 +163,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, on
       <BusinessP1 page="permissoes" tenantId={tenantId} access={access} request={requestRef.current} ui={ui} />
     </div>;
   if (!access.enabled || !has(allowed,'business.view'))
-    return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} onDone={onAccessChange} />;
+    return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} currentUserId={currentUserId} ui={ui} onDone={onAccessChange} />;
   const openNew=()=>{setEditing(null);navigate('monitoramentos/novo');};
   const openEdit=(i)=>{setEditing(i);navigate(`monitoramentos/${i.id}/editar`);};
   const editId=window.location.pathname.match(/^\/negocios\/monitoramentos\/([^/]+)\/editar$/)?.[1];

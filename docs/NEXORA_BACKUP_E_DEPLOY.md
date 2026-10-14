@@ -11,7 +11,7 @@ Servidor de produção: `nexora-producao` (Oracle Linux 9), projeto em `/opt/nex
 
 **Estado atual (14/10/2026):** ativo **somente em modo local**, na própria produção: 12 s, ~52 MB por backup, retenção de **14 dias** (`LOCAL_KEEP=14`), testado pelo agendador do systemd (5/5 hashes ok). **Limitação:** backup na mesma máquina não protege contra perda da VM ou do disco. O envio para a máquina "Nexora BKP" (144.22.204.148 / 10.0.0.115, Oracle free de 1 GB de RAM) foi **adiado**: ela travou ao rodar `dnf` (memória insuficiente), então o `rrsync` não foi instalado nela. Os arquivos para ligar o envio restrito já estão em `scripts/backup-machine/` e a chave de envio já existe na produção (`/home/opc/.ssh/nexora_backup_ed25519`, **ainda não autorizada em lugar nenhum**).
 
-**Importante:** o `.env` entra no backup porque contém `BUSINESS_SIGNING_KEY` (cujas chaves públicas ficam fixadas nos Business Workers) e `PUSH_TOKEN_KEY` (que decifra os tokens de push). Perder esse arquivo exige gerar chaves novas e refixar os workers. Guarde o destino remoto com acesso restrito, de preferência cifrado em repouso.
+**Importante:** o `.env` entra no backup porque contém `BUSINESS_SIGNING_KEY` (cujas chaves públicas ficam fixadas nos Business Workers) (o push mobile da `main` não usa chave própria no `.env`). Perder esse arquivo exige gerar chaves novas e refixar os workers. Guarde o destino remoto com acesso restrito, de preferência cifrado em repouso.
 
 **Operar**
 ```bash
@@ -47,6 +47,12 @@ Passos gerais:
 
 ## 4. Estado do ambiente após o deploy de 14/10/2026
 - Migrations aplicadas até a **052**. **RabbitMQ ligado em 14/10/2026**: serviço `rabbitmq` ativo (rede privada), `tools/rabbitmq_smoke.py` passou 8/8 contra o broker real, `RABBITMQ_URL` definida no `.env` e API em modo `broker` (ready 200, sem erros nos logs). Para voltar ao modo `db`: esvaziar `RABBITMQ_URL` e `docker compose up -d api worker`.
-- `PUSH_TOKEN_KEY` e `BUSINESS_SIGNING_KEY` geradas no servidor. `EXPO_PROJECT_IDS` vazio: **nenhum aparelho será aceito para push até existir o projeto EAS** (a rota responde 422/503, sem efeito colateral).
+- `BUSINESS_SIGNING_KEY` gerada no servidor (a `PUSH_TOKEN_KEY` do `.env` ficou sem uso: o push passou a ser o da `main`). `EXPO_PROJECT_IDS` vazio: **nenhum aparelho será aceito para push até existir o projeto EAS** (a rota responde 422/503, sem efeito colateral).
 - Nenhum Business Worker, fonte ou monitor foi criado: nada novo roda até o Master configurar.
 - Pendências de higiene: arquivos de `/opt/nexora` com permissão 666/777; disco em ~66% após limpar o cache de build do Docker.
+
+## 5. Push mobile: integração com a `main` (14/10/2026)
+O push mobile oficial é o da `main` (PRs #12 e #13: `expo_push.py`, migration `050_expo_push_notifications.sql`, tabelas `nx_*`, app e central de notificações). O push próprio que esta branch tinha (tabelas `cm_push_*`, migration `050_expo_push.sql`) foi **removido**; o Business Monitor passou a usar o `enqueue_notification` da `main` (domínio `BUSINESS`, destinatários com `business.view`).
+
+**Produção (importante no próximo deploy):** o servidor já aplicou a `050_expo_push.sql` antiga (tabelas `cm_push_*`, vazias: nenhum aparelho chegou a ser aceito). A `050_expo_push_notifications.sql` da `main` é **outra** migration (tabelas `nx_*`) e deve ser aplicada como `platform_admin`, marcada em `cm_schema_migrations` e com `GRANT` ao `central_app`, como as demais. As tabelas `cm_push_*` antigas ficam sem uso e podem ser removidas depois. Configure `EXPO_PROJECT_IDS` (e `EXPO_ACCESS_TOKEN`, se necessário) no `.env`.
+

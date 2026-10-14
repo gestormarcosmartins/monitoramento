@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 from .db import connect, migrate, tenant_connection
 from .glpi import GlpiClient
 from .notifications import deliver_notifications
+from .expo_push import process_push_deliveries, process_push_receipts
 from .settings import get_settings
 from .sla import add_sla_minutes
 from .obligations import create_ticket_obligations, escalation_level
@@ -541,13 +542,10 @@ def main() -> None:
                 logger.exception('business_glpi_reconcile_cycle_failed')
             next_business_eval=time.monotonic()+60
         process_outbox()
-        try:
-            from .expo_push import process_expo_pushes
-            process_expo_pushes()
-        except Exception:
-            logger.exception('expo_push_cycle_failed')
         reconcile_glpi_tickets()
         process_obligation_escalations()
+        process_push_deliveries()
+        process_push_receipts()
         run_monitors()
         time.sleep(settings.monitor_interval_seconds)
     logger.info("worker_stopped")

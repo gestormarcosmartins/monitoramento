@@ -40,15 +40,12 @@ class Settings(BaseSettings):
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
     monitor_interval_seconds: int = Field(default=30, ge=10, alias="MONITOR_INTERVAL_SECONDS")
     action_execution_enabled: bool = Field(default=False, alias="ACTION_EXECUTION_ENABLED")
+    expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
+    expo_project_ids: str = Field(default="", alias="EXPO_PROJECT_IDS")
     vapid_public_key: str = Field(default="", alias="VAPID_PUBLIC_KEY")
     vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
     vapid_subject: str = Field(default="mailto:noreply@nexora.local", alias="VAPID_SUBJECT")
     benner_ingest_token: str = Field(default="", alias="BENNER_INGEST_TOKEN")
-    # Expo push (mobile). The token key is a Fernet key; allowed project ids block cross-project tokens.
-    push_token_key: str = Field(default="", alias="PUSH_TOKEN_KEY")
-    expo_project_ids: str = Field(default="", alias="EXPO_PROJECT_IDS")
-    expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
-    expo_push_url: str = Field(default="https://exp.host/--/api/v2/push", alias="EXPO_PUSH_URL")
     # Ed25519 seed (base64, 32 bytes) used to sign published Business query revisions.
     business_signing_key: str = Field(default="", alias="BUSINESS_SIGNING_KEY")
     # Directory with Business Worker release packages (copied there by operations); registering a release hashes the file.

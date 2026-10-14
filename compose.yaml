@@ -78,6 +78,8 @@ services:
       GLPI_USERNAME: ${GLPI_USERNAME:-glpi}
       GLPI_PASSWORD: ${GLPI_PASSWORD:-glpi}
       SMTP_HOST: ${SMTP_HOST:-}
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      EXPO_PROJECT_IDS: ${EXPO_PROJECT_IDS:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:noreply@nexora.local}
@@ -100,11 +102,8 @@ services:
       BENNER_INGEST_TOKEN: ${BENNER_INGEST_TOKEN:-}
       RABBITMQ_URL: ${RABBITMQ_URL:-}
       RABBITMQ_QUEUE_TYPE: ${RABBITMQ_QUEUE_TYPE:-classic}
-      PUSH_TOKEN_KEY: ${PUSH_TOKEN_KEY:-}
       BUSINESS_SIGNING_KEY: ${BUSINESS_SIGNING_KEY:-}
       BUSINESS_RELEASES_DIR: /data/releases
-      EXPO_PROJECT_IDS: ${EXPO_PROJECT_IDS:-}
-      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
     volumes:
       - ./releases:/data/releases:ro
     depends_on:

@@ -6,6 +6,7 @@ import "./nexora.css";
 import "./home.css";
 import { isTenantResponseCurrent } from "./tenant-request-guard.js";
 import BusinessMonitor from "./business-monitor.jsx";
+import Notifications from "./notifications.jsx";
 const authConfig = {
     clientId: "central-monitor",
     realmUrl: `${location.origin}/auth/realms/central-monitor`,
@@ -202,6 +203,7 @@ const menu = [
     ["monitoring", "Monitoramento", "activity"],
     ["business", "Monitoramento de Negócios", "report"],
     ["incidents", "Incidentes", "alert"],
+    ["notifications", "Notificações", "bell"],
     ["operations", "Operação", "automation"],
     ["reports", "Relatórios", "report"],
     ["settings", "Configurações", "settings"],
@@ -295,6 +297,7 @@ const navigationSubmenus = {
 const viewPermissionRequirements = {
   clients: "company.read",
   incidents: "ticket.read",
+  notifications: "infra.view",
   portal: "ticket.read",
   "portal-requests": "ticket.read",
   contracts: "contract.read",
@@ -315,6 +318,7 @@ const featureModeAllowsTraffic = (mode) => mode == null || mode === "write_pilot
 const viewPaths = {
   overview: "/visao-geral",
   business: "/negocios/visao-geral",
+  notifications: "/notificacoes/central",
   databases: "/monitoramento/bancos",
   clients: "/empresas",
   assets: "/monitoramento/ambientes",
@@ -360,6 +364,7 @@ const viewPaths = {
 const routeFromLocation = () => {
   const path = location.pathname.replace(/\/+$/, "") || "/";
   if (path.startsWith("/negocios/")) return { view: "business" };
+  if (path === "/notificacoes" || path.startsWith("/notificacoes/")) return { view: "notifications" };
   if (path === "/administracao/equipes/novo") return { view: "admin-teams", teamMode: "new" };
   const editTeam = path.match(/^\/administracao\/equipes\/([^/]+)\/editar$/);
   if (editTeam) return { view: "admin-teams", teamMode: "edit", teamId: decodeURIComponent(editTeam[1]) };
@@ -2417,8 +2422,13 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
               : errorStatus === 409
                 ? <Conflict description={error} onReview={clearError} />
                 : <Unavailable title="Não foi possível concluir a operação." description={error} />)}
+          {view === "notifications" && tenantId && <Notifications key={tenantId}
+            request={(path, opts = {}) => api(path, token, opts, tenantId)}
+            canAudit={isMaster || (authContext?.permissions_by_company?.[tenantId] || []).includes("notification.audit.view")}
+            onOpenIncident={(incidentId) => { setView("incidents"); loadDetail({ id: incidentId }); }}
+            ui={{ PageHeader, MetricGroup, ListPage, FilterBar, DataGrid, Loading, Unavailable }} />}
           {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId}
-            access={businessAccess} isMaster={isMaster} onAccessChange={reloadBusinessAccess}
+            access={businessAccess} isMaster={isMaster} currentUserId={currentUser?.id} onAccessChange={reloadBusinessAccess}
             request={(path,opts={})=>api(path,token,opts,tenantId)}
             ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions}} />}
           {view === "overview" && (

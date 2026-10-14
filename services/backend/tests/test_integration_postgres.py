@@ -19,7 +19,6 @@ URL = os.environ.get("NEXORA_TEST_DATABASE_URL")
 if URL:
     os.environ.update({
         "CENTRAL_DATABASE_URL": URL, "REDIS_URL": "redis://localhost:6399/0", "CENTRAL_SECRET_KEY": "x" * 40, "ZABBIX_API_URL": "http://z", "ZABBIX_API_TOKEN": "t",
-        "PUSH_TOKEN_KEY": __import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key().decode(),
         "EXPO_PROJECT_IDS": "11111111-2222-3333-4444-555555555555",
         "BUSINESS_SIGNING_KEY": base64.b64encode(os.urandom(32)).decode(),
     })
@@ -336,43 +335,29 @@ class PostgresFlows(unittest.TestCase):
         bm.change_status(monitor["id"], bm.StatusChange(action="disable", reason="manutencao"), self.A, self.master_ident)
         self.assertIsNone(self.claim_one(auth))
 
-    # ------------------------------------------------------------------ push (PUSH-005/006)
-    def test_push_pipeline_send_receipt_and_access_checks(self):
-        token = lambda s: f"ExponentPushToken[{s}abcdefgh]"
-        with connect() as c:
-            c.execute("""INSERT INTO cm_push_devices(user_id,installation_id,platform,token_cipher,token_hash,token_hint,expo_project_id)
-                VALUES (%s,%s,'android',%s,%s,%s,'p')""", (self.user["id"], "install-" + uuid.uuid4().hex[:8], ep.encrypt_token(token("u1")),
-                                                          ep.token_hash(token("u1") + uuid.uuid4().hex), ep.token_hint(token("u1"))))
+    # ------------------------------------------------------------------ push: contract with enqueue_notification (main)
+    def test_business_notification_reaches_only_users_with_business_access(self):
+        """The Business Monitor uses the shared enqueue_notification: BUSINESS audience = business.view, independent of INFRA."""
         with tenant_connection(self.A) as c:
-            nid = ep.enqueue_notification(c, self.A, domain="INFRA", source_type="incident", source_id="i-" + uuid.uuid4().hex[:6],
-                                          event_key="ev-" + uuid.uuid4().hex, severity="critical", category="incident", title="T", body="B",
-                                          action_type="incident", action_ref="i1", recipients=[self.user["id"]], requires_ack=True)
-            business_nid = ep.enqueue_notification(c, self.A, domain="BUSINESS", source_type="o", source_id="o1", event_key="b-" + uuid.uuid4().hex,
-                                                   severity="high", category="x", title="T", body="B", action_type="business_occurrence",
-                                                   action_ref="o1", recipients=[self.user["id"]])
-        self.assertIsNotNone(nid)
-        with tenant_connection(self.A) as c:  # infra access does not imply business push
-            self.assertEqual(c.execute("SELECT count(*) AS n FROM cm_notification_recipients WHERE notification_id=%s", (business_nid,)).fetchone()["n"], 0)
-
-        def fake_post(path, body):
-            if path == "send":
-                return {"data": [{"status": "ok", "id": "T-" + uuid.uuid4().hex[:6]} for _ in body]}
-            return {"data": {i: {"status": "ok"} for i in body["ids"]}}
-
-        with mock.patch.object(ep, "_expo_post", side_effect=fake_post):
-            self.assertGreaterEqual(ep.send_pending(self.A), 1)
-            with tenant_connection(self.A) as c:
-                c.execute("UPDATE cm_push_expo_deliveries SET sent_at=now()-interval '20 minutes' WHERE state='SENT_TO_EXPO'")
-            self.assertGreaterEqual(ep.check_receipts(self.A), 1)
-        with tenant_connection(self.A) as c:
-            self.assertIsNotNone(c.execute("SELECT 1 FROM cm_push_expo_deliveries WHERE state='PROVIDER_ACCEPTED'").fetchone())
-        opened = ep.open_notification(nid, self.A, self.user_ident)
-        self.assertEqual(opened["action_type"], "incident")
-        self.assertTrue(ep.acknowledge_notification(nid, self.A, self.user_ident)["acknowledged"])
-        with tenant_connection(self.A) as c:  # access revoked afterwards: same neutral 404
-            c.execute("UPDATE cm_access_grants SET active=false WHERE user_id=%s AND tenant_id=%s", (self.user["id"], self.A))
-        with self.assertRaises(HTTPException):
-            ep.open_notification(nid, self.A, self.user_ident)
+            ws = c.execute("SELECT workspace_id FROM cm_tenants WHERE id=%s", (self.A,)).fetchone()["workspace_id"]
+            c.execute("""INSERT INTO cm_business_grants(tenant_id,user_id,capability,scope_type,active,granted_by,reason)
+                VALUES (%s,%s,'business.view','company',true,%s,'test') ON CONFLICT (tenant_id,user_id,capability) DO UPDATE SET active=true""",
+                      (self.A, self.master["id"], self.user["id"]))
+            c.execute("""INSERT INTO cm_access_grants(workspace_id,tenant_id,user_id,role,row_scope,granted_by,reason)
+                SELECT %s,%s,%s,'admin','company',%s,'test' WHERE NOT EXISTS (SELECT 1 FROM cm_access_grants WHERE tenant_id=%s AND user_id=%s AND active)""",
+                      (ws, self.A, self.master["id"], self.master["id"], self.A, self.master["id"]))
+            key = "business-occurrence:" + uuid.uuid4().hex + ":opened"
+            kwargs = dict(domain="BUSINESS", source_type="business_occurrence", source_id=uuid.uuid4().hex, event_key=key, severity="high",
+                          category="business_indicator", title="Ocorrência de negócio", body="Há uma ocorrência que exige atenção. Abra o Nexora.",
+                          action_type="business_occurrence", action_ref=uuid.uuid4().hex, recipients=[self.master["id"], self.user["id"]])
+            nid = ep.enqueue_notification(c, self.A, **kwargs)
+            self.assertIsNotNone(nid)
+            audience = {r["user_id"] for r in c.execute("SELECT user_id FROM nx_notification_recipients WHERE notification_id=%s", (nid,)).fetchall()}
+            self.assertEqual(audience, {self.master["id"]})  # the infra admin has no business.view: no business push
+            self.assertIsNone(ep.enqueue_notification(c, self.A, **kwargs))  # same event key: deduplicated, no second push
+            row = c.execute("SELECT domain,severity,body_safe FROM nx_notifications WHERE id=%s", (nid,)).fetchone()
+            self.assertEqual((row["domain"], row["severity"]), ("BUSINESS", "P1"))
+            self.assertNotIn("R$", row["body_safe"])  # generic text, never values on the lock screen
 
 
 @unittest.skipUnless(URL, "NEXORA_TEST_DATABASE_URL not set")
