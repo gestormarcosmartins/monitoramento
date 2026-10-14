@@ -35,6 +35,8 @@ from .business_glpi import router as business_glpi_router
 from .expo_push import router as expo_push_router
 from .business_monitors import master_router as business_monitor_master_router
 from .business_governance import master_router as business_governance_router
+from .business_releases import master_router as business_releases_master_router
+from .business_releases import worker_router as business_releases_worker_router
 from .business_monitors import read_router as business_monitor_read_router
 from .business_monitors import worker_router as business_worker_router
 from .consolidated_tickets import router as consolidated_tickets_router
@@ -80,6 +82,8 @@ app.include_router(business_glpi_router)
 app.include_router(expo_push_router)
 app.include_router(business_monitor_master_router)
 app.include_router(business_governance_router)
+app.include_router(business_releases_master_router)
+app.include_router(business_releases_worker_router)
 app.include_router(business_monitor_read_router)
 app.include_router(business_worker_router)
 # Must precede ticketing_router: "/tickets/consolidated" would otherwise match "/tickets/{ticket_id}".

@@ -26,6 +26,7 @@ def list_workers_for_master(tenant_id: str = Depends(tenant_header), identity: I
     _master(identity, tenant_id)
     with tenant_connection(tenant_id) as db:
         return list(db.execute("""SELECT w.id,w.name,w.status,w.version,w.capacity,w.last_heartbeat_at,w.last_execution_at,w.created_at,w.revoked_at,
+              w.update_ring,w.platform,w.update_status,w.update_version,w.update_error,w.update_reported_at,
               (SELECT count(*) FROM cm_business_executions e WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.id
                  AND e.state IN ('LEASED','RUNNING')) AS active_jobs,
               (SELECT count(*) FROM cm_business_executions e WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.id

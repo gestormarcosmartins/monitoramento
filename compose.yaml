@@ -102,8 +102,11 @@ services:
       RABBITMQ_QUEUE_TYPE: ${RABBITMQ_QUEUE_TYPE:-classic}
       PUSH_TOKEN_KEY: ${PUSH_TOKEN_KEY:-}
       BUSINESS_SIGNING_KEY: ${BUSINESS_SIGNING_KEY:-}
+      BUSINESS_RELEASES_DIR: /data/releases
       EXPO_PROJECT_IDS: ${EXPO_PROJECT_IDS:-}
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+    volumes:
+      - ./releases:/data/releases:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -5,8 +5,11 @@ Opt-in: set NEXORA_TEST_DATABASE_URL to a database owned by a NON-superuser role
 The database is migrated and filled with throw-away rows: use a disposable database, never a real one.
 """
 import base64
+import hashlib
 import json
 import os
+import pathlib
+import tempfile
 import unittest
 import uuid
 from datetime import UTC, datetime
@@ -22,7 +25,7 @@ if URL:
     })
     from fastapi import HTTPException
     from central_monitor import business, business_monitors as bm, business_results as br, db, expo_push as ep
-    from central_monitor import business_broker, business_governance as bg, worker as cm_worker
+    from central_monitor import business_broker, business_governance as bg, business_releases as brel, worker as cm_worker
     from central_monitor.auth import Identity
     from central_monitor.db import connect, tenant_connection
     from central_monitor.main import ensure_user
@@ -158,6 +161,72 @@ class PostgresFlows(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:  # another company's id is the same neutral 404
             bg.execution_metadata(uuid.UUID(str(revision["test_execution_id"])), self.B, self.master_ident)
         self.assertIn(ctx.exception.status_code, (403, 404))
+
+
+    # ------------------------------------------------------------------ signed remote update with canary ring
+    def test_release_lifecycle_canary_then_stable_then_rollback(self):
+        worker, monitor, _ = self.setup_monitor()
+        fresh = lambda: bm.worker_identity(self.A, str(worker["id"]), worker["worker_token"])
+        folder = pathlib.Path(tempfile.mkdtemp(prefix="nx-rel-"))
+        self.addCleanup(lambda: [f.unlink() for f in folder.iterdir()] or folder.rmdir())
+        stamp = uuid.uuid4().int % 900 + 100  # unique versions: releases are platform-level and shared by all tests
+        old, new = f"7.{stamp}.0", f"7.{stamp}.1"
+
+        def drop_releases():  # releases are global: leave none behind for the next test
+            with connect() as c:
+                c.execute("DELETE FROM cm_business_worker_releases WHERE version IN (%s,%s)", (old, new))
+        self.addCleanup(drop_releases)
+        for version in (old, new):
+            (folder / f"w-{version}.tar.gz").write_bytes(f"package {version}".encode())
+        with mock.patch.object(brel, "_releases_dir", return_value=folder):
+            for call in (lambda: brel.list_releases(self.A, self.user_ident),
+                         lambda: brel.register_release(brel.ReleaseCreate(version=old, platform="linux-x64", file_name=f"w-{old}.tar.gz"), self.A, self.user_ident)):
+                with self.assertRaises(HTTPException) as ctx:
+                    call()
+                self.assertEqual(ctx.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as ctx:  # path traversal / missing file
+                brel.register_release(brel.ReleaseCreate(version=old, platform="linux-x64", file_name="nope.tar.gz"), self.A, self.master_ident)
+            self.assertEqual(ctx.exception.status_code, 422)
+            released = {v: brel.register_release(brel.ReleaseCreate(version=v, platform="linux-x64", file_name=f"w-{v}.tar.gz", notes="teste"), self.A, self.master_ident)
+                        for v in (old, new)}
+            self.assertEqual(released[new]["sha256"], hashlib.sha256(f"package {new}".encode()).hexdigest())
+            with self.assertRaises(HTTPException) as ctx:
+                brel.register_release(brel.ReleaseCreate(version=new, platform="linux-x64", file_name=f"w-{new}.tar.gz"), self.A, self.master_ident)
+            self.assertEqual(ctx.exception.status_code, 409)
+            # `old` is promoted by hand in the database: it is the baseline that is already stable.
+            with connect() as c:
+                c.execute("UPDATE cm_business_worker_releases SET channel='stable' WHERE id=%s", (released[old]["id"],))
+
+            bm.heartbeat(bm.Heartbeat(version=old), fresh())
+            self.assertIsNone(brel.check_update("linux-x64", fresh())["update"])  # new is canary only; stable ring
+            brel.set_update_ring(worker["id"], brel.RingBody(ring="canary"), self.A, self.master_ident)
+            offer = brel.check_update("linux-x64", fresh())["update"]
+            manifest = json.loads(offer["payload"])
+            self.assertTrue(br.verify_manifest(manifest, offer["signature"], br.public_key_b64()))
+            self.assertEqual((manifest["version"], manifest["tenant_id"], manifest["worker_id"], manifest["rollback"]), (new, self.A, str(worker["id"]), False))
+            self.assertEqual(manifest["sha256"], released[new]["sha256"])
+            download = brel.download_release(new, "linux-x64", fresh())
+            self.assertEqual(pathlib.Path(download.path).read_bytes(), f"package {new}".encode())
+            with self.assertRaises(HTTPException) as ctx:  # only what it is offered right now
+                brel.download_release(old, "linux-x64", fresh())
+            self.assertEqual(ctx.exception.status_code, 404)
+
+            with self.assertRaises(HTTPException) as ctx:  # no evidence yet: nobody applied it
+                brel.promote_release(released[new]["id"], self.A, self.master_ident)
+            self.assertEqual(ctx.exception.status_code, 409)
+            brel.report_update(brel.UpdateStatus(version=new, status="APPLIED"), fresh())
+            bm.heartbeat(bm.Heartbeat(version=new), fresh())
+            self.assertIsNone(brel.check_update("linux-x64", fresh())["update"])  # up to date
+            self.assertEqual(brel.promote_release(released[new]["id"], self.A, self.master_ident)["status"], "stable")
+            brel.set_update_ring(worker["id"], brel.RingBody(ring="stable"), self.A, self.master_ident)
+
+            brel.revoke_release(released[new]["id"], brel.RevokeBody(reason="regressao encontrada"), self.A, self.master_ident)
+            back = json.loads(brel.check_update("linux-x64", fresh())["update"]["payload"])
+            self.assertEqual((back["version"], back["rollback"]), (old, True))
+            brel.set_update_ring(worker["id"], brel.RingBody(ring="hold"), self.A, self.master_ident)
+            self.assertIsNone(brel.check_update("linux-x64", fresh())["update"])  # hold freezes everything
+            row = next(w for w in bg.list_workers_for_master(self.A, self.master_ident) if str(w["id"]) == str(worker["id"]))
+            self.assertEqual((row["update_ring"], row["platform"], row["update_status"], row["update_version"]), ("hold", "linux-x64", "APPLIED", new))
 
     # ------------------------------------------------------------------ full cycle (H04/H07/H12)
     def test_full_cycle_feeds_indicator_once_and_is_idempotent(self):
