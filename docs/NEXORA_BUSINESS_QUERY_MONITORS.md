@@ -1,69 +1,79 @@
-# Business Monitor — monitores de consulta (lado central) e contrato do Business Worker
+# Business Monitor — monitores de consulta: central, RabbitMQ e Business Worker
 
-**Base:** `Nexora_Business_Monitor_Especificacao_Oficial_v1_0.docx` (14/10/2026) · **Código:** `business_monitors.py`, `business_sql.py`, `business_results.py`, migration `051_business_query_monitors.sql`.
-**Situação:** o lado central está implementado e testado contra PostgreSQL real (migrations 001–051, RLS forçada). O **Business Worker** (processo C# separado) e o **RabbitMQ** ainda **não** existem; este documento é o contrato para quem desenvolver o Worker.
+**Base:** `Nexora_Business_Monitor_Especificacao_Oficial_v1_0.docx` (14/10/2026).
+**Código:** central (`business_monitors.py`, `business_sql.py`, `business_results.py`, `business_broker.py`, migrations 051–052), Worker (`agent/Nexora.BusinessWorker`), testes (`agent/Nexora.BusinessWorker.Tests`, `services/backend/tests`), ferramentas (`tools/`).
 
-## 1. O que já existe no backend
+## 1. Situação por item da spec (backlog P0)
 
-| Spec | Entrega | Evidência |
+| Item | Situação | Evidência |
 |---|---|---|
-| P0-05 SQL read-only | Validador por AST (T-SQL e PostgreSQL, `sqlglot`): um único `SELECT`; bloqueia DML/DDL, `SELECT INTO`, `FOR UPDATE`, `EXEC`, CTE com DML, nomes de quatro partes (linked server), tabelas temporárias, `@@variáveis`, funções com efeito colateral/acesso externo. O texto que roda é o **normalizado pela AST** (sem divergência entre parser e banco) | `test_business_sql.py` |
-| P0-06 JSON tabular | Colunas sempre presentes, uma linha = um objeto com todas as chaves, `null` preservado, vazio = sucesso com `rows: []`, decimal exato (texto), data/hora com fuso obrigatório, `truncated` só se o teto foi atingido | `test_business_results.py` |
-| P0-07 Master + auditoria | Só o Master técnico cria/edita/testa/publica/suspende; cada ação grava `cm_audit_log` (hash da consulta, revisão). O TOTP já é obrigatório no realm Keycloak | integração |
-| P0-04 (parte central) | Scheduler no worker central, execuções com lease, idempotência por `execution_id`, retentativas com backoff, expiração sem “tempestade”, circuit breaker (5 falhas) | integração |
-| P0-08 | Resultado SUCCEEDED alimenta o indicador pelo mesmo pipeline do Business Monitor (série, estado, ocorrência, GLPI, push) | integração |
-| Revisões assinadas | Ed25519 por job (liga a consulta a `execution_id` + worker; não pode ser reaproveitada) | `test_business_results.py` |
-| Identidade do Worker | Credencial própria (`X-Worker-ID`/`X-Worker-Token`), um token por instalação, revogável; vinculada ao tenant | integração |
+| P0-01 Extrair negócio do `AgentWorker` | **Feito.** O agente de infraestrutura não referencia mais nenhum código de negócio (coletor, fila SQLite, leitor, extensões de cliente); pacotes do `csproj` devolvidos ao estado original | compila sem avisos; `grep -i business agent/Nexora.Agent` vazio |
+| P0-02 Executável e serviços separados | **Feito (código).** `Nexora.BusinessWorker` é outro executável, com instaladores próprios para Windows Service e systemd (conta de serviço de privilégio mínimo, reinício automático, limites de memória/CPU, prioridade baixa) | publish single-file executado; instaladores **não executados** (exigem root/administrador) |
+| P0-03 Identidade e heartbeat próprios | **Feito.** Credencial por instalação (`X-Worker-*`), revogável; heartbeat em serviço independente do loop de jobs; central marca `OFFLINE` | testes de integração + E2E |
+| P0-04 RabbitMQ + scheduler/outbox + gateway | **Feito, com ressalva.** Outbox transacional → publicação com *confirm* → fila por worker com DLX/DLQ → claim consome, concede lease no banco e só então dá ACK. Sem `RABBITMQ_URL` opera em modo `db` | testes de integração em PostgreSQL real com um *double* do broker; cliente `pika` testado só com simulação. **Nunca foi executado contra um RabbitMQ real** (ver 3) |
+| P0-05 SQL read-only | **Feito.** Validação por AST (T-SQL e PostgreSQL), texto normalizado, TLS obrigatório, sessão somente leitura, timeout e cancelamento | `test_business_sql.py`, `PostgresExecutorTests` |
+| P0-06 JSON tabular tipado | **Feito.** Colunas fixas, nulos, vazio, erro, truncamento, decimal exato, data com fuso | testes Python e C# |
+| P0-07 Master único e auditoria | **Feito.** Só o Master técnico governa; rascunho → teste → publicação; auditoria; TOTP no Keycloak | integração |
+| P0-08 Regras e alertas | **Feito** reaproveitando o motor existente (estado, ocorrência, SLA, GLPI, push) | integração + E2E |
+| P0-09 Instalador/upgrade/rollback | **Parcial.** Instaladores e script de build independentes. Faltam atualização remota assinada e *canary* | — |
+| P0-10 Testes E2E e de falha | **Parcial.** H03, H04, H07, H09, H11 (parcial) e H12 cobertos; **H01, H05, H06, H08, H10 não executados** (ver 4) | `tools/e2e_business_worker.py` |
 
-## 2. O que **não** está feito (e por quê)
+## 2. O que mudou na arquitetura de execução
+- A central **não** guarda nem conhece senha de banco: o job traz só `database_ref`; a string de conexão é resolvida no cliente (variável `NEXORA_BW_DB_<REF>` ou arquivo em diretório protegido).
+- Cada job é **assinado por job** (Ed25519) sobre o JSON canônico e entregue como `{"payload": "<json>", "signature": "<base64>"}`. O Worker verifica a assinatura **sobre os bytes exatos** e só então interpreta o payload, sem reimplementar canonicalização. A chave pública é fixada na instalação (*pinning*).
+- A consulta que roda é o texto **normalizado pela AST**, não o digitado.
+- Falhas só entram como "tentar de novo" quando são transitórias; tudo é limitado (3 tentativas, 2 renovações de lease, circuit breaker de 5 falhas).
 
-1. **Business Worker em C#** (P0-01, P0-02, P0-03 do lado do cliente, P0-09): precisa do SDK .NET 8 e de homologação em Windows/Linux. Este documento define o contrato (seção 3).
-2. **RabbitMQ + outbox publisher** (P0-04): não há broker provisionado no `compose.yaml`. Hoje a fila lógica é a tabela `cm_business_executions` (claim com `FOR UPDATE SKIP LOCKED` + lease). O contrato com o Worker **não muda** quando o broker entrar: o scheduler passará a publicar mensagens e o gateway as consumirá com ACK manual. **Desvio assumido:** a spec pede que o banco não substitua o broker; isto é uma etapa intermediária, a ser decidida e aprovada.
-3. **Telas** do Nexora para monitores, execuções e workers (P1-01): só API.
-4. **DLQ e reprocessamento** (P1-02), retenção/expurgo (P1-04; a coluna `retain_until` já existe, falta o job de expurgo), alerta ao responsável por perda de heartbeat (hoje o worker é marcado `OFFLINE` e vai para o log/auditoria).
-5. Parâmetros dinâmicos: só `$today` (data no fuso da empresa) e `$now` (UTC); demais valores são fixos.
+## 3. O que ainda **não** foi provado (leia antes de homologar)
+1. **RabbitMQ real.** O Docker não funciona neste computador (WSL ausente). O cliente `pika` foi testado com objetos simulados e a lógica ao redor com um *double* que reproduz o contrato (fila por worker, confirm, DLQ, redelivery), mas topologia, `mandatory`, expiração por mensagem e DLX só se provam com um broker. **Rode `tools/rabbitmq_smoke.py` num ambiente com RabbitMQ antes de ligar `RABBITMQ_URL`.**
+2. **SQL Server.** O executor usa o mesmo código para os dois bancos, mas só PostgreSQL foi exercitado. `ApplicationIntent=ReadOnly`, certificado e tipos `datetime` precisam de teste com um SQL Server real.
+3. **Windows Service e systemd.** Os instaladores têm sintaxe validada (PowerShell e `bash -n`), mas não foram executados.
+4. **Isolamento (H01).** Dois processos independentes, com limites próprios, mas não houve o teste crítico "matar o Worker durante uma consulta lenta com o agente de infraestrutura em operação". Exige o agente real.
+5. **Carga e desempenho** (H08): nada foi medido; os números da spec seguem como valores iniciais sugeridos.
+6. **Telas** (P1-01) e **DLQ com reprocessamento** (P1-02): só API. O formulário antigo de coletores por HUB virou histórico somente leitura.
 
-## 3. Contrato para o desenvolvedor do Business Worker (.NET 8)
+## 4. Como testar
+```powershell
+# Backend (unitários); com PostgreSQL descartável, também a integração:
+$env:NEXORA_TEST_DATABASE_URL = "postgresql://central_app:pw@localhost:5432/central_monitor"   # papel SEM superusuário; extensão pgcrypto instalada
+python -m unittest discover -s services/backend/tests
 
-Autenticação em **todas** as chamadas: `X-Tenant-ID`, `X-Worker-ID`, `X-Worker-Token` (o token é mostrado **uma vez** ao criar o worker em `POST /api/v1/master/business/workers`). HTTPS obrigatório. O Worker **nunca** acessa RabbitMQ nem o banco central.
+# Worker (.NET 8): 53 testes; 7 usam PostgreSQL real quando NEXORA_TEST_PG está definido
+$env:NEXORA_TEST_PG = "Host=127.0.0.1;Port=5432;Database=erp_demo;Username=postgres"
+dotnet test agent/Nexora.BusinessWorker.Tests
+
+# Ponta a ponta (API + PostgreSQL + Worker real); precisa de: pip install pixeltable-pgserver
+dotnet build agent/Nexora.BusinessWorker -c Release
+python tools/e2e_business_worker.py --dotnet "C:\caminho\dotnet.exe"
+
+# Se mudar a assinatura/canonicalização no servidor, regenere os vetores usados pelo C#:
+python tools/gen_worker_vectors.py
+```
+
+## 5. Operação
+**Master (por empresa):** habilitar o produto → criar worker (`POST /api/v1/master/business/workers`, o `worker_token` aparece **uma vez**) → fonte (`/data-sources` com `dialect` e `database_ref`) → monitor (`/monitors`; consulta validada e normalizada) → teste (`…/revisions/1/test`) → publicação (`…/publish`, exige teste bem-sucedido). Editar = nova revisão. `…/status` suspende, retoma ou desativa (cancela jobs ainda não iniciados). `GET …/broker/status` e `…/broker/dead-letters` mostram fila e mensagens mortas da empresa.
+
+**Servidor:** `BUSINESS_SIGNING_KEY` (seed Ed25519 em base64, 32 bytes) é obrigatória para publicar; `RABBITMQ_URL` liga o broker (o `compose.yaml` já traz o serviço `rabbitmq` na rede privada; sem a variável o modo é `db`).
+
+**Cliente (servidor monitorado):**
+1. `agent\build-business-worker.ps1 -Runtime win-x64` (ou `linux-x64`) gera o executável autocontido e roda os testes.
+2. Obtenha a chave pública (`GET /api/v1/agents/business/signing-key`, com os cabeçalhos do worker) e confirme-a com o Master.
+3. Windows: `install-business-worker.ps1 -ServerUrl … -TenantId … -WorkerId … -Token (Read-Host -AsSecureString) -SigningPublicKey … -DatabaseRef erp_principal -ConnectionString "…"` · Linux: `install-business-worker.sh --server-url … --token-file … --signing-key … --database-ref … --connection-file …`.
+4. Crie no banco do ERP um login **somente leitura** com `SELECT` apenas nas views/tabelas autorizadas. É a proteção principal; o resto é defesa em profundidade.
+5. Teste TLS válido no banco. A opção `AllowUntrustedServerCertificate` existe só para homologação; `AllowPlaintextLoopbackDatabase` só para desenvolvimento no mesmo servidor.
+
+## 6. Contrato do Worker (referência)
+Cabeçalhos em todas as chamadas: `X-Tenant-ID`, `X-Worker-ID`, `X-Worker-Token`.
 
 | Rota | Uso |
 |---|---|
-| `GET /api/v1/agents/business/signing-key` | Chave pública Ed25519; **fixar na instalação** (pinning) e comparar |
-| `POST /api/v1/agents/business/heartbeat` `{version}` | A cada ≤ 60 s, independente do agente de infraestrutura |
-| `GET /api/v1/agents/business/jobs/claim?limit=1` | Devolve `{jobs:[…]}`; vazio se o worker já tem job ativo ou não há trabalho |
-| `POST …/jobs/{id}/started` | Ao iniciar (exige lease válido) |
-| `POST …/jobs/{id}/renew` | Até 2 renovações de 90 s |
-| `POST …/jobs/{id}/result` | Resultado tabular (abaixo); responde `accepted`, `duplicate` ou erro |
-| `POST …/jobs/{id}/failed` | `{status: FAILED|TIMED_OUT|REJECTED, error_code, error_message(≤500, sanitizada), retryable, duration_ms}` |
+| `GET /api/v1/agents/business/signing-key` | Chave pública Ed25519 (para fixar na instalação) |
+| `POST …/heartbeat` `{version}` | ≤ 60 s, independente do loop de jobs |
+| `GET …/jobs/claim?limit=1` | `{jobs:[{payload, signature}]}`; vazio se o worker já tem job ativo ou não há trabalho; **503** se o broker estiver fora (o Worker apenas tenta de novo) |
+| `POST …/jobs/{id}/started` · `/renew` | Início e até 2 renovações de 90 s |
+| `POST …/jobs/{id}/result` | `{started_at, duration_ms, columns, rows, row_count, truncated}` → `accepted`, `duplicate` ou erro |
+| `POST …/jobs/{id}/failed` | `{status: FAILED|TIMED_OUT|REJECTED, error_code, error_message, retryable, duration_ms}`; nunca texto de driver, SQL ou valores |
 
-**Job recebido** (campos assinados): `execution_id, monitor_id, revision, tenant_id, worker_id, expires_at, lease_expires_at, database_ref, dialect, query, parameters, constraints{timeout_seconds,max_rows,max_bytes}, column_schema[], test, correlation_id` + `signature`.
+Resultado: `columns` idêntico a `column_schema`; cada linha é **um objeto** com todas as colunas (`null` quando ausente); `decimal` como texto; `date` ISO; `datetime` ISO **com fuso**; vazio = `rows: []`. Violação do contrato → a central rejeita e conta como falha. Reenvio do mesmo resultado → `duplicate`; resultado diferente para execução fechada → `409`.
 
-**O Worker deve, antes de executar:** (1) verificar a assinatura Ed25519 sobre o JSON canônico do manifesto **sem** o campo `signature` (chaves ordenadas, separadores `,` e `:`, UTF-8, sem espaços); (2) conferir `tenant_id`/`worker_id` próprios e `expires_at` futuro; se falhar, responder `failed` com `status=REJECTED`; (3) resolver `database_ref` na **configuração local** (string de conexão e usuário/senha só-leitura nunca vêm da central).
-
-**Execução:** parâmetros por *bind* (`@nome`), nunca concatenados; timeout e cancelamento do comando (`timeout_seconds`); ler no máximo `max_rows` + 1 linha para saber se houve truncamento; abortar acima de `max_bytes`; concorrência 1; limites de CPU/memória do processo; nenhum log de dados, SQL com parâmetros ou credenciais.
-
-**Resultado:** `{started_at, duration_ms, columns, rows, row_count, truncated}` onde `columns` é **idêntico** a `column_schema` (mesma ordem), cada linha é **um objeto** com todas as colunas (`null` quando ausente), `decimal` como **texto** (`"1200.50"`), `date` ISO (`2026-10-14`), `datetime` ISO **com fuso**, `boolean` real. Resultado vazio: `rows: []`, `row_count: 0`. Violação do contrato → a central rejeita e conta como falha.
-
-**Falhas e repetição:** se o Worker cair depois de executar e antes de enviar, o job é reentregue (lease expirado); como é leitura, repetir é seguro. A central consolida **um** resultado por `execution_id`; reenviar o mesmo resultado devolve `duplicate`; resultado diferente para execução fechada devolve `409`.
-
-**Isolamento (critério de aceite crítico):** processo/serviço **separado** do agente de infraestrutura (duas unidades Windows Service/systemd), sem memória, fila, thread pool ou executor compartilhados. Matar o Worker no meio de uma consulta lenta não pode afetar heartbeat nem coleta da infraestrutura. O código atual de negócio dentro de `AgentWorker.cs`/`BusinessCollector.cs` deve ser extraído (P0-01), mantendo o agente de infraestrutura sem dependência dele.
-
-## 4. Operação (Master)
-
-1. `PUT /api/v1/business/enable` na empresa (já existente).
-2. `POST /api/v1/master/business/workers` → guarda o `worker_token` (aparece uma vez).
-3. `POST /api/v1/master/business/data-sources` `{name, worker_id, dialect, database_ref}`.
-4. `POST /api/v1/master/business/monitors` (cria revisão 1 em rascunho; consulta validada e normalizada) → `…/revisions/1/test` → aguardar o Worker → `…/revisions/1/publish` (exige teste bem-sucedido). Editar = nova revisão (`POST …/revisions`), que precisa ser testada e publicada.
-5. `POST …/monitors/{id}/status` `{action: suspend|resume|disable, reason}`; suspender/desativar cancela jobs ainda não iniciados.
-
-Configuração do servidor: `BUSINESS_SIGNING_KEY` (seed Ed25519 em base64, 32 bytes; comando em `.env.example`). Sem ela, `publish` e `signing-key` respondem 503.
-
-## 5. Como rodar os testes de integração
-Os testes `test_integration_postgres.py` só rodam com um PostgreSQL **descartável** cujo dono seja um papel **sem** superusuário (superusuário ignora RLS):
-
-```powershell
-$env:NEXORA_TEST_DATABASE_URL = "postgresql://central_app:pw@localhost:5432/central_monitor"
-python -m unittest -v services/backend/tests/test_integration_postgres.py
-```
-O banco precisa ter a extensão `pgcrypto` (usada pela migration 024).
+Isolamento: o Worker nunca fala com RabbitMQ nem com o banco central; sem API, ele só para de rodar consultas e reconecta.

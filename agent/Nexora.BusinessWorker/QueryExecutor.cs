@@ -57,7 +57,20 @@ public sealed class DbQueryExecutor : IQueryExecutor
         {
             throw new TimeoutException("query_timeout");
         }
+        catch (Exception ex) when (IsDriverTimeout(ex))
+        {
+            // The server/driver timeout usually fires before our own hard stop: same outcome, same classification.
+            throw new TimeoutException("query_timeout");
+        }
     }
+
+    private static bool IsDriverTimeout(Exception ex) => ex switch
+    {
+        PostgresException p => p.SqlState == "57014",                       // query_canceled (statement_timeout)
+        SqlException s => s.Number == -2,                                    // client timeout
+        NpgsqlException n => n.InnerException is TimeoutException,
+        _ => false,
+    };
 
     private static DbConnection Create(string dialect, string connectionString) =>
         dialect == "sqlserver" ? new SqlConnection(connectionString) : new NpgsqlConnection(connectionString);

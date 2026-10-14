@@ -88,10 +88,17 @@ public sealed class JobRunner
         TimeoutException => new FailureBody { Status = "TIMED_OUT", ErrorCode = "query_timeout", Retryable = true, DurationMs = durationMs },
         DbException d => new FailureBody
         {
-            Status = "FAILED", ErrorCode = $"db_error_{d.ErrorCode}".Replace('-', 'n'),
+            Status = "FAILED", ErrorCode = DbCode(d),
             ErrorMessage = d.GetType().Name, Retryable = d.IsTransient, DurationMs = durationMs,
         },
         _ => new FailureBody { Status = "FAILED", ErrorCode = "unexpected_error", ErrorMessage = exception.GetType().Name, Retryable = false, DurationMs = durationMs },
+    };
+
+    private static string DbCode(DbException d) => d switch
+    {
+        Npgsql.PostgresException p => $"pg_{p.SqlState}",
+        Microsoft.Data.SqlClient.SqlException s => $"mssql_{s.Number}",
+        _ => "db_error",
     };
 
     private async Task RenewLoopAsync(Job job, CancellationToken token)

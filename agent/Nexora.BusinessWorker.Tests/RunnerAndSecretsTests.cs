@@ -196,6 +196,7 @@ public class JobRunnerTests
         Assert.DoesNotContain("SECRET", body.ErrorMessage);
         Assert.DoesNotContain("SECRET", body.ErrorCode);
         Assert.Equal("PostgresException", body.ErrorMessage);
+        Assert.Equal("pg_42501", body.ErrorCode);
     }
 
     [Fact]
