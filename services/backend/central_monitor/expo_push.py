@@ -84,13 +84,78 @@ def build_event(event: str, incident: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------- produção (PUSH-004, PUSH-007)
-def _authorized_infra_users(connection: Any, tenant_id: str) -> list[UUID]:
-    return [row["user_id"] for row in connection.execute(
-        """SELECT DISTINCT g.user_id FROM cm_access_grants g JOIN cm_users u ON u.id=g.user_id
-        WHERE g.tenant_id=%s AND g.active AND u.active AND g.role=ANY(%s)
-          AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())""",
-        (tenant_id, list(INFRA_ROLES)),
-    ).fetchall()]
+DOMAINS = ("INFRA", "BUSINESS", "SERVICE")
+SEVERITY_ALIASES = {"critical": "P0", "high": "P1", "medium": "P2", "low": "P3"}
+
+
+def normalize_severity(value: str) -> str:
+    value = SEVERITY_ALIASES.get(value, value)
+    if value not in TTL_BY_SEVERITY:
+        raise ValueError("Severidade inválida")
+    return value
+
+
+def has_domain_access(db: Any, tenant_id: str, user_id: Any, domain: str) -> bool:
+    """Autorização atual do usuário no domínio. INFRA e BUSINESS são independentes: um não implica o outro."""
+    if domain == "INFRA":
+        return bool(db.execute(
+            """SELECT 1 FROM cm_access_grants g JOIN cm_users u ON u.id=g.user_id WHERE g.tenant_id=%s AND g.user_id=%s
+            AND g.active AND u.active AND g.role=ANY(%s) AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())""",
+            (tenant_id, user_id, list(INFRA_ROLES))).fetchone())
+    base = """SELECT 1 FROM cm_access_grants g JOIN cm_users u ON u.id=g.user_id WHERE g.tenant_id=%s AND g.user_id=%s
+        AND g.active AND u.active AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())"""
+    if domain == "BUSINESS":
+        return bool(db.execute(
+            base + """ AND EXISTS (SELECT 1 FROM cm_business_grants b WHERE b.tenant_id=g.tenant_id AND b.user_id=g.user_id
+            AND b.capability='business.view' AND b.active)""", (tenant_id, user_id)).fetchone())
+    if domain == "SERVICE":
+        return bool(db.execute(base, (tenant_id, user_id)).fetchone())
+    return False
+
+
+def visible_domains(db: Any, tenant_id: str, user_id: Any) -> list[str]:
+    return [domain for domain in DOMAINS if has_domain_access(db, tenant_id, user_id, domain)]
+
+
+def enqueue_notification(db: Any, tenant_id: str, *, domain: str, source_type: str, source_id: str, event_key: str,
+                         severity: str, category: str, title: str, body: str, action_type: str, action_ref: str | None,
+                         recipients: list[Any], requires_ack: bool = False, ttl_seconds: int | None = None,
+                         correlation_key: str | None = None) -> Any | None:
+    """Ponto único de produção de push. Chamar dentro da transação que gerou o evento.
+
+    Devolve None quando o evento já foi enfileirado (deduplicação por empresa + event_key).
+    Destinatários sem acesso atual ao domínio são descartados aqui e revalidados a cada envio.
+    """
+    if domain not in DOMAINS:
+        raise ValueError("Domínio de notificação desconhecido")
+    severity = normalize_severity(severity)
+    expires_at = datetime.now(UTC) + (timedelta(seconds=ttl_seconds) if ttl_seconds else TTL_BY_SEVERITY[severity])
+    notification = db.execute(
+        """INSERT INTO nx_notifications(tenant_id,domain,source_type,source_id,event_key,correlation_key,
+            severity,category,title,body_safe,action_type,action_ref,require_ack,expires_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (tenant_id,event_key) DO NOTHING RETURNING id""",
+        (tenant_id, domain, source_type, source_id, event_key, correlation_key, severity, category,
+         title[:160], body[:300], action_type, action_ref, requires_ack, expires_at)).fetchone()
+    if not notification:
+        return None
+    users = [u for u in dict.fromkeys(recipients) if has_domain_access(db, tenant_id, u, domain)]
+    muted = {row["user_id"] for row in db.execute(
+        """SELECT user_id FROM nx_notification_preferences WHERE tenant_id=%s AND user_id=ANY(%s)
+        AND domain=%s AND category=%s AND NOT push_enabled""", (tenant_id, users, domain, category)).fetchall()} if users else set()
+    for user_id in users:
+        recipient = db.execute(
+            "INSERT INTO nx_notification_recipients(tenant_id,notification_id,user_id) VALUES (%s,%s,%s) RETURNING id",
+            (tenant_id, notification["id"], user_id)).fetchone()
+        if user_id in muted:  # P0 só ignora preferência com política administrativa (backlog P1)
+            continue
+        db.execute(
+            """INSERT INTO nx_push_deliveries(tenant_id,recipient_id,device_id)
+            SELECT %s::uuid,%s::uuid,d.id FROM nx_push_devices d WHERE d.user_id=%s AND d.enabled AND d.permission_status='granted'
+            ON CONFLICT DO NOTHING""", (tenant_id, recipient["id"], user_id))
+    db.execute("INSERT INTO nx_push_audit(tenant_id,action,target,metadata) VALUES (%s,'notification.created',%s,%s)",
+               (tenant_id, str(notification["id"]), Jsonb({"domain": domain, "event": event_key.split(":")[-1], "recipients": len(users)})))
+    return notification["id"]
 
 
 def create_infra_notification(tenant_id: str, incident_id: str, event: str, incident: dict[str, Any]) -> None:
@@ -99,42 +164,15 @@ def create_infra_notification(tenant_id: str, incident_id: str, event: str, inci
         spec = build_event(event, incident)
         if not spec:
             return
-        event_key = f"incident:{incident_id}:{event}"
-        expires_at = datetime.now(UTC) + TTL_BY_SEVERITY[spec["severity"]]
-        with tenant_connection(tenant_id) as connection:
-            notification = connection.execute(
-                """INSERT INTO nx_notifications(tenant_id,domain,source_type,source_id,event_key,correlation_key,
-                    severity,category,title,body_safe,action_type,action_ref,require_ack,expires_at)
-                VALUES (%s,'INFRA','incident',%s,%s,%s,%s,%s,%s,%s,'INCIDENT',%s,%s,%s)
-                ON CONFLICT (tenant_id,event_key) DO NOTHING RETURNING id""",
-                (tenant_id, incident_id, event_key, f"incident:{incident_id}", spec["severity"], spec["category"],
-                 spec["title"], spec["body_safe"], incident_id, spec["require_ack"], expires_at),
-            ).fetchone()
-            if not notification:  # já criada: reprocessamento do outbox
-                return
-            users = _authorized_infra_users(connection, tenant_id)
-            if users:
-                muted = {row["user_id"] for row in connection.execute(
-                    """SELECT user_id FROM nx_notification_preferences WHERE tenant_id=%s AND user_id=ANY(%s)
-                    AND domain='INFRA' AND category=%s AND NOT push_enabled""",
-                    (tenant_id, users, spec["category"])).fetchall()}
-                # P0 ignora preferência de categoria só se houver política administrativa (P1 do backlog); por ora respeita.
-                for user_id in users:
-                    recipient = connection.execute(
-                        "INSERT INTO nx_notification_recipients(tenant_id,notification_id,user_id) VALUES (%s,%s,%s) RETURNING id",
-                        (tenant_id, notification["id"], user_id)).fetchone()
-                    if user_id in muted:
-                        continue
-                    with connect() as devices_db:
-                        devices = devices_db.execute(
-                            "SELECT id FROM nx_push_devices WHERE user_id=%s AND enabled", (user_id,)).fetchall()
-                    for device in devices:
-                        connection.execute(
-                            "INSERT INTO nx_push_deliveries(tenant_id,recipient_id,device_id) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
-                            (tenant_id, recipient["id"], device["id"]))
-            connection.execute(
-                "INSERT INTO nx_push_audit(tenant_id,action,target,metadata) VALUES (%s,'notification.created',%s,%s)",
-                (tenant_id, str(notification["id"]), Jsonb({"event": event, "recipients": len(users)})))
+        with tenant_connection(tenant_id) as db:
+            users = [row["user_id"] for row in db.execute(
+                "SELECT DISTINCT g.user_id FROM cm_access_grants g WHERE g.tenant_id=%s AND g.active AND g.role=ANY(%s)",
+                (tenant_id, list(INFRA_ROLES))).fetchall()]
+            enqueue_notification(
+                db, tenant_id, domain="INFRA", source_type="incident", source_id=incident_id,
+                event_key=f"incident:{incident_id}:{event}", correlation_key=f"incident:{incident_id}",
+                severity=spec["severity"], category=spec["category"], title=spec["title"], body=spec["body_safe"],
+                action_type="INCIDENT", action_ref=incident_id, recipients=users, requires_ack=spec["require_ack"])
     except Exception:
         logger.exception("expo_push_create_failed", extra={"incident_id": incident_id})
 
@@ -185,11 +223,7 @@ def _prepare(connection: Any, tenant_id: str, delivery: dict[str, Any]) -> tuple
         return None, "recipient_missing"
     if row["expires_at"] and row["expires_at"] < datetime.now(UTC):
         return None, "expired"
-    still_authorized = connection.execute(
-        """SELECT 1 FROM cm_access_grants g JOIN cm_users u ON u.id=g.user_id WHERE g.tenant_id=%s AND g.user_id=%s
-        AND g.active AND u.active AND g.role=ANY(%s) AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())""",
-        (tenant_id, row["user_id"], list(INFRA_ROLES))).fetchone()
-    if not still_authorized:
+    if not has_domain_access(connection, tenant_id, row["user_id"], row["domain"]):
         return None, "unauthorized"
     with connect() as devices_db:
         device = devices_db.execute("SELECT * FROM nx_push_devices WHERE id=%s", (delivery["device_id"],)).fetchone()
@@ -383,8 +417,14 @@ def revoke_device(device_id: UUID, identity: Identity = Depends(current_identity
 
 
 def _member(identity: Identity, tenant_id: str) -> dict[str, Any]:
+    """Membro da empresa, com os domínios que ele pode ver AGORA (perda de acesso vale imediatamente)."""
     from .operations import authorize  # import tardio: evita ciclo com main
-    return authorize(identity, tenant_id, INFRA_ROLES)
+    user = authorize(identity, tenant_id)
+    with tenant_connection(tenant_id) as db:
+        user["domains"] = visible_domains(db, tenant_id, user["id"])
+    if not user["domains"]:
+        raise HTTPException(status_code=403, detail="Sem acesso a notificações nesta empresa")
+    return user
 
 
 @router.get("")
@@ -395,7 +435,7 @@ def list_notifications(
 ) -> dict[str, Any]:
     user = _member(identity, tenant_id)
     with tenant_connection(tenant_id) as connection:
-        conditions, params = ["r.tenant_id=%s", "r.user_id=%s"], [tenant_id, user["id"]]
+        conditions, params = ["r.tenant_id=%s", "r.user_id=%s", "n.domain=ANY(%s)"], [tenant_id, user["id"], user["domains"]]
         if only_unread:
             conditions.append("r.opened_at IS NULL")
         if severity:
@@ -422,9 +462,10 @@ def _mark(notification_id: UUID, tenant_id: str, identity: Identity, column: str
             if ack and not ack["require_ack"]:
                 raise HTTPException(status_code=409, detail="Esta notificação não exige confirmação")
         row = connection.execute(
-            f"""UPDATE nx_notification_recipients SET {column}=COALESCE({column},now())
-            WHERE tenant_id=%s AND notification_id=%s AND user_id=%s RETURNING notification_id""",
-            (tenant_id, notification_id, user["id"])).fetchone()
+            f"""UPDATE nx_notification_recipients r SET {column}=COALESCE(r.{column},now())
+            FROM nx_notifications n WHERE n.id=r.notification_id AND r.tenant_id=%s AND r.notification_id=%s AND r.user_id=%s
+            AND n.domain=ANY(%s) RETURNING r.notification_id""",
+            (tenant_id, notification_id, user["id"], user["domains"])).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Notificação não encontrada")
         notification = connection.execute(
