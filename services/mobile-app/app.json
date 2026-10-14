@@ -28,7 +28,19 @@
     "plugins": [
       "expo-web-browser",
       "expo-secure-store",
-      ["expo-notifications", { "defaultChannel": "alerts", "color": "#2563FF" }]
-    ]
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "alerts",
+          "color": "#2563FF"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e875294a-6fb4-416d-9eeb-805c29a44a8b"
+      }
+    },
+    "owner": "marcos.martins"
   }
 }
