@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     expo_project_ids: str = Field(default="", alias="EXPO_PROJECT_IDS")
     expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
     expo_push_url: str = Field(default="https://exp.host/--/api/v2/push", alias="EXPO_PUSH_URL")
+    # Ed25519 seed (base64, 32 bytes) used to sign published Business query revisions.
+    business_signing_key: str = Field(default="", alias="BUSINESS_SIGNING_KEY")
     expo_receipt_delay_seconds: int = Field(default=900, ge=60, alias="EXPO_RECEIPT_DELAY_SECONDS")
 
 

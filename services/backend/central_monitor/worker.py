@@ -527,6 +527,11 @@ def main() -> None:
             except Exception:
                 logger.exception('business_worker_failed')
             try:
+                from .business_monitors import run_scheduler
+                run_scheduler(connect)
+            except Exception:
+                logger.exception('business_query_scheduler_failed')
+            try:
                 from .business_glpi import reconcile_tickets
                 reconcile_tickets(connect)
             except Exception:
