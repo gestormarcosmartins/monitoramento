@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace Nexora.Agent;
 
-public sealed partial class SqlServerCollector
+public sealed class SqlServerCollector
 {
     private readonly AgentOptions _options;
     private readonly SqlCredentialStore _password;

@@ -1,0 +1,39 @@
+[Unit]
+Description=Nexora Business Worker (read-only business queries)
+Documentation=https://github.com/gestormarcosmartins/monitoramento
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=nexora-bw
+Group=nexora-bw
+WorkingDirectory=/opt/nexora-business-worker
+# Remote update: before each start, apply a staged package that the installed binary re-verified (signed manifest + SHA-256),
+# with probation and automatic rollback. The leading + runs it with full privileges; it never fails the unit.
+ExecStartPre=+/usr/local/lib/nexora-business-worker/apply-update.sh
+StateDirectory=nexora-business-worker
+ExecStart=/opt/nexora-business-worker/Nexora.BusinessWorker
+# Independent supervision: a crash here restarts only this unit; the infrastructure agent is another unit.
+Restart=always
+RestartSec=5
+# Resource budget: a runaway query can never starve the infrastructure agent (tune after load tests).
+MemoryMax=600M
+CPUQuota=40%
+TasksMax=128
+Nice=10
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadOnlyPaths=/etc/nexora-business-worker
+
+[Install]
+WantedBy=multi-user.target

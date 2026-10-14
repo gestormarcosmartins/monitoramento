@@ -1,0 +1,12 @@
+[Unit]
+Description=Agenda o backup full diário do Nexora (03:15, horário do servidor)
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=300
+# Se o servidor estava desligado às 03:15, roda assim que voltar.
+Persistent=true
+Unit=nexora-backup.service
+
+[Install]
+WantedBy=timers.target

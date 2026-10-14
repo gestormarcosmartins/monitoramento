@@ -11,14 +11,13 @@ public sealed class AgentWorker : BackgroundService
     private readonly ILogger<AgentWorker> _logger;
     private readonly HostCollector _host;
     private readonly SqlServerCollector _sql;
-    private readonly BusinessCollector _business;
     private readonly IBennerEngineDiagnostics _benner;
 #if CHAVEOU_AGENT
     private readonly ChaveouMonitorCollector _chaveou;
 #endif
     private readonly HashSet<string> _processed = new(StringComparer.OrdinalIgnoreCase);
 
-    public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql, BusinessCollector business,
+    public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql,
         IBennerEngineDiagnostics benner,
 #if CHAVEOU_AGENT
         ChaveouMonitorCollector chaveou,
@@ -30,7 +29,6 @@ public sealed class AgentWorker : BackgroundService
         _options = options.Value;
         _host = host;
         _sql = sql;
-        _business = business;
         _benner = benner;
 #if CHAVEOU_AGENT
         _chaveou = chaveou;
@@ -74,11 +72,9 @@ public sealed class AgentWorker : BackgroundService
                     nextChaveouPerformance=now.AddSeconds(Math.Max(900,_options.ChaveouPerformanceSeconds));
                 }
 #endif
-                await _business.CollectAsync(config,stoppingToken);
                 await _central.HeartbeatAsync(health,stoppingToken);
                 await CollectAsync(config, stoppingToken);
                 await FlushAsync(stoppingToken);
-                await _business.FlushAsync(stoppingToken);
             }
             catch (Exception error)
             {

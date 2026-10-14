@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace Nexora.Agent;
 
-public sealed partial class CentralClient
+public sealed class CentralClient
 {
     // sql-server-direct is reported only when this install actually has SQL Server
     // configured: Central auto-provisions a set of SQL monitors for any agent that

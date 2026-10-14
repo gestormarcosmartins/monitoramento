@@ -525,8 +525,9 @@ const actionIconName = (label) => {
   const value = label.toLocaleLowerCase("pt-BR");
   if (value.includes("editar")) return "edit";
   if (value.includes("visualizar") || value.includes("detalhe")) return "view";
-  if (value.includes("excluir") || value.includes("remover")) return "trash";
-  if (value.includes("inativar") || value.includes("ignorar") || value.includes("desativar")) return "pause";
+  if (value.includes("excluir") || value.includes("remover") || value.includes("revogar") || value.includes("descartar")) return "trash";
+  if (value.includes("inativar") || value.includes("ignorar") || value.includes("desativar") || value.includes("suspender")) return "pause";
+  if (value.includes("retomar") || value.includes("testar") || value.includes("reprocessar")) return "play";
   if (value.includes("ativar") || value.includes("reativar") || value.includes("atender") || value.includes("executar")) return "play";
   if (value.includes("publicar")) return "play";
   if (value.includes("revisar")) return "edit";
@@ -1258,7 +1259,7 @@ function App() {
     // The Master technical user has no implicit Business access, but must still be able to
     // reach the bootstrap screen (activate the product, designate the first administrator) —
     // otherwise nobody could ever turn the product on through the UI.
-    if (candidate === "business") return isMaster || (businessAccess.enabled && businessAccess.capabilities?.includes("business.view"));
+    if (candidate === "business") return isMaster || (businessAccess.enabled && (businessAccess.capabilities?.includes("business.view") || businessAccess.capabilities?.includes("business.grants.manage")));
     if (candidate === "overview") return true;
     if (!featureEnabled(`view:${candidate}`)) return false;
     const required = viewPermissionRequirements[candidate];

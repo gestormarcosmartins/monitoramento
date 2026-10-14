@@ -37,9 +37,6 @@ builder.Services.AddSingleton<HostCollector>();
 builder.Services.AddSingleton<SqlServerCollector>();
 builder.Services.AddSingleton<IBennerEngineDiagnostics, BennerSqlServerDiagnostics>();
 builder.Services.AddSingleton<LocalQueue>();
-builder.Services.AddSingleton<BusinessQueue>();
-builder.Services.AddSingleton<BusinessReader>();
-builder.Services.AddSingleton<BusinessCollector>();
 #if CHAVEOU_AGENT
 builder.Services.AddSingleton<ChaveouMonitorCollector>();
 #endif

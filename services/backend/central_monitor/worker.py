@@ -446,6 +446,9 @@ def process_outbox() -> None:
                 sync_incident(str(row["tenant_id"]), row["payload"]["incident_id"])
             elif row["topic"] == "incident.comment_created":
                 sync_incident_comment(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["comment_id"])
+            elif row["topic"] == "business.job.publish":
+                from .business_monitors import publish_job
+                publish_job(str(row["tenant_id"]),row["payload"]["execution_id"])
             elif row["topic"] == "tenant.created":
                 from .glpi_entities import ensure_tenant_entity
                 ensure_tenant_entity(str(row["tenant_id"]))
@@ -527,6 +530,11 @@ def main() -> None:
                 evaluate_business_tenants(connect,tenant_connection)
             except Exception:
                 logger.exception('business_worker_failed')
+            try:
+                from .business_monitors import run_scheduler
+                run_scheduler(connect)
+            except Exception:
+                logger.exception('business_query_scheduler_failed')
             try:
                 from .business_glpi import reconcile_tickets
                 reconcile_tickets(connect)

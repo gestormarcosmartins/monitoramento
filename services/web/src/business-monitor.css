@@ -25,3 +25,20 @@
 .bm-glpi-form { display: grid; gap: 12px; max-width: 640px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--border, #d0d7de); border-radius: 8px; }
 .bm-glpi-form h3, .bm-glpi-form p { margin: 0; }
 .bm-glpi-form button { min-height: 44px; justify-self: start; }
+
+.nexora-form.bm-bootstrap-form { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 880px; margin-top: 12px; }
+.bm-bootstrap-form .field { margin: 0; min-width: 0; }
+.bm-bootstrap-form .field input, .bm-bootstrap-form .field select { width: 100%; min-height: 44px; }
+.bm-admins { margin-top: 16px; }
+.bm-admins h3 { margin: 0 0 8px; font-size: 1rem; }
+.bm-admins ul { margin: 0; padding-left: 20px; }
+@media (max-width: 720px) { .nexora-form.bm-bootstrap-form { grid-template-columns: minmax(0, 1fr); } }
+
+.bm-sql { margin: 0 0 8px; padding: 12px; overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, Consolas, monospace; background: #0b1f3b; color: #e2e8f0; border-radius: 8px; }
+.bm-pager { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.bm-pager button, .bm-pager select { min-height: 44px; }
+.form-section-grid .field.wide { grid-column: 1 / -1; }
+.form-section-grid textarea { width: 100%; min-height: 96px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font: inherit; resize: vertical; }
+.bm-checklist { margin: 12px 0; padding-left: 20px; display: grid; gap: 6px; }
+.bm-checklist .done { color: #166534; }
+.bm-checklist .todo { color: #92400e; }

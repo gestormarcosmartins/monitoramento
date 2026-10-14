@@ -32,6 +32,12 @@ from .agent_api import router as agent_router
 from .business import router as business_router, agent_router as business_agent_router
 from .business_p1 import router as business_p1_router
 from .business_glpi import router as business_glpi_router
+from .business_monitors import master_router as business_monitor_master_router
+from .business_governance import master_router as business_governance_router
+from .business_releases import master_router as business_releases_master_router
+from .business_releases import worker_router as business_releases_worker_router
+from .business_monitors import read_router as business_monitor_read_router
+from .business_monitors import worker_router as business_worker_router
 from .consolidated_tickets import router as consolidated_tickets_router
 from .consolidated_alerts import router as consolidated_alerts_router
 from .consolidated_inventory import assets_router as consolidated_assets_router, monitors_router as consolidated_monitors_router
@@ -73,6 +79,12 @@ app.include_router(business_router)
 app.include_router(business_agent_router)
 app.include_router(business_p1_router)
 app.include_router(business_glpi_router)
+app.include_router(business_monitor_master_router)
+app.include_router(business_governance_router)
+app.include_router(business_releases_master_router)
+app.include_router(business_releases_worker_router)
+app.include_router(business_monitor_read_router)
+app.include_router(business_worker_router)
 # Must precede ticketing_router: "/tickets/consolidated" would otherwise match "/tickets/{ticket_id}".
 app.include_router(consolidated_tickets_router)
 app.include_router(consolidated_alerts_router)

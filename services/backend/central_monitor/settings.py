@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
     vapid_subject: str = Field(default="mailto:noreply@nexora.local", alias="VAPID_SUBJECT")
     benner_ingest_token: str = Field(default="", alias="BENNER_INGEST_TOKEN")
+    # Ed25519 seed (base64, 32 bytes) used to sign published Business query revisions.
+    business_signing_key: str = Field(default="", alias="BUSINESS_SIGNING_KEY")
+    # Directory with Business Worker release packages (copied there by operations); registering a release hashes the file.
+    business_releases_dir: str = Field(default="/data/releases", alias="BUSINESS_RELEASES_DIR")
+    # RabbitMQ for Business job dispatch (central only; workers never see it). Empty = "db" mode.
+    rabbitmq_url: str = Field(default="", alias="RABBITMQ_URL")
+    rabbitmq_queue_type: str = Field(default="classic", alias="RABBITMQ_QUEUE_TYPE")
+    expo_receipt_delay_seconds: int = Field(default=900, ge=60, alias="EXPO_RECEIPT_DELAY_SECONDS")
 
 
 @lru_cache

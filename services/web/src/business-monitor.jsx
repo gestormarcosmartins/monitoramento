@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './business-monitor.css';
 import BusinessP1 from './business-p1.jsx';
+import BusinessQueries from './business-queries.jsx';
 
 const ROOT = '/negocios';
 const fmt = (v) => v ? new Date(v).toLocaleString('pt-BR') : '—';
@@ -16,7 +17,9 @@ function BusinessBootstrap({tenantId, request, access, isMaster, currentUserId, 
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState('');
   const [users,setUsers]=useState([]);
-  useEffect(()=>{ if(access.enabled) request('/api/v1/users').then(setUsers).catch(()=>setUsers([])); },[access.enabled,tenantId]);
+  const [admins,setAdmins]=useState([]);
+  const loadAdmins=()=>request('/api/v1/business/grants').then(rows=>setAdmins(rows.filter(r=>r.capability==='business.grants.manage'&&r.active))).catch(()=>setAdmins([]));
+  useEffect(()=>{ if(access.enabled){ request('/api/v1/users').then(setUsers).catch(()=>setUsers([])); loadAdmins(); } },[access.enabled,tenantId]);
   if (!isMaster) return <div className="panel"><h2>Acesso não autorizado</h2><p>Este usuário não possui concessão para Monitoramento de Negócios nesta Empresa.</p></div>;
   const enable=async(event)=>{
     event.preventDefault();setBusy(true);setMessage('');
@@ -31,6 +34,8 @@ function BusinessBootstrap({tenantId, request, access, isMaster, currentUserId, 
       await request('/api/v1/business/grants',{method:'PUT',body:JSON.stringify({
         user_id:form.get('user_id'),capability:'business.grants.manage',scope_type:'company',
         active:true,reason:form.get('reason')})});
+      await loadAdmins();
+      setMessage('ok');
       await onDone();
     }catch(e){setMessage(e.message||'Falha ao conceder acesso');}finally{setBusy(false);}
   };
@@ -40,7 +45,15 @@ function BusinessBootstrap({tenantId, request, access, isMaster, currentUserId, 
   return <section className="panel">
     <h2>Ativação do Monitoramento de Negócios</h2>
     <p>Produto independente, sem acesso implícito: o Master técnico pode ativar e indicar o primeiro administrador, mas não pode conceder acesso a si mesmo.</p>
-    {message && <div role="alert" className="bm-error">{message}</div>}
+    {access.enabled && <ol className="bm-checklist" aria-label="Primeiro acesso">
+      <li className="done">Produto ativado para esta Empresa.</li>
+      <li className={admins.length?'done':'todo'}>{admins.length?`Administrador de negócios designado: ${admins.map(a=>a.display_name).join(', ')}.`:'Designe um administrador de negócios (formulário abaixo).'}</li>
+      <li className={['business.view','business.monitor.create','business.monitor.update'].every(c=>(access.capabilities||[]).includes(c))?'done':'todo'}>
+        O Master precisa receber, de outro usuário, as permissões de visualizar e de criar/editar monitoramentos
+        ({['business.view','business.monitor.create','business.monitor.update'].filter(c=>!(access.capabilities||[]).includes(c)).join(', ')||'concedidas'}). O Master não pode concedê-las a si mesmo.</li>
+    </ol>}
+    {message==='ok' && <div role="status" className="info-banner">Administração concedida. Peça ao usuário indicado para entrar no Nexora: ele verá a tela de Permissões e poderá conceder acesso a você.</div>}
+    {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {!access.enabled ? (
       <form className="nexora-form" onSubmit={enable}>
         <FormSection title="Ativação">
@@ -61,8 +74,33 @@ function BusinessBootstrap({tenantId, request, access, isMaster, currentUserId, 
           </FormSection>
           <FormActions submitLabel={busy?'Concedendo...':'Conceder administração de negócios'} submitting={busy || !eligible.length}/>
         </form>
+        {admins.length>0 && <div className="bm-admins"><h3>Administradores de negócios desta Empresa</h3>
+          <ul>{admins.map(a=><li key={a.user_id}><strong>{a.display_name}</strong> — {a.email} <small>(desde {fmt(a.granted_at)})</small></li>)}</ul></div>}
       </>
     )}
+  </section>;
+}
+
+/** Lets the first business administrator hand the technical Master the standard access in one step (3 individual grants).
+ *  The backend still authorizes every grant: self-grant and non-administrators are refused there. */
+function MasterQuickGrant({request, ui}) {
+  const [master,setMaster]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[failed,setFailed]=useState(false);
+  useEffect(()=>{request('/api/v1/business/eligible-users').then(rows=>setMaster(rows.find(r=>r.is_master)||null)).catch(()=>setMaster(null));},[]);
+  if(!master) return null;
+  const grant=async()=>{
+    setBusy(true);setMessage('');setFailed(false);
+    try{
+      for(const capability of ['business.view','business.monitor.create','business.monitor.update'])
+        await request('/api/v1/business/grants-scoped',{method:'PUT',body:JSON.stringify({user_id:master.id,capability,scope_type:'company',scope_id:null,active:true,
+          reason:'Acesso padrão do Master técnico ao módulo de negócios'})});
+      setMessage(`Acesso padrão concedido a ${master.display_name}.`);
+    }catch(e){setFailed(true);setMessage(e.message||'Falha ao conceder');}finally{setBusy(false);}
+  };
+  return <section className="bm-glpi-form" aria-labelledby="bm-quick-grant">
+    <h3 id="bm-quick-grant">Acesso padrão do Master técnico</h3>
+    <p>Concede a <strong>{master.display_name}</strong> visualizar e criar/editar monitoramentos desta Empresa (escopo Empresa). Cada concessão fica em auditoria.</p>
+    {message&&<p role={failed?'alert':'status'} className={failed?'bm-error':'info-banner'}>{message}</p>}
+    <button type="button" className="primary" disabled={busy} onClick={grant}>{busy?'Concedendo...':'Conceder acesso padrão ao Master'}</button>
   </section>;
 }
 
@@ -78,10 +116,11 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
   const [editing,setEditing]=useState(null);
   const requestRef=useRef(request); requestRef.current=request;
   const sequence=useRef(0);
+  const [,setRouteTick]=useState(0);
   const navigate=(next) => {
     const target = `${ROOT}/${next}`;
     if (window.location.pathname !== target) window.history.pushState({},'',target);
-    setPage(routeName());setMessage('');
+    setPage(routeName());setMessage('');setRouteTick(t=>t+1);
   };
   const reload = async () => {
     const id=++sequence.current;
@@ -98,8 +137,31 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
   };
   useEffect(() => { if (tenantId && has(access.capabilities||[],'business.view')) reload();
     else {sequence.current++;setIndicators([]);setHealth(null);setOccurrences([]);} },[tenantId,access.capabilities?.join('|')]);
-  useEffect(() => {const pop=()=>setPage(routeName());window.addEventListener('popstate',pop);return ()=>window.removeEventListener('popstate',pop);},[]);
+  useEffect(() => {const pop=()=>{setPage(routeName());setRouteTick(t=>t+1);};window.addEventListener('popstate',pop);return ()=>window.removeEventListener('popstate',pop);},[]);
   const allowed=access.capabilities||[];
+  const governance=access.enabled&&isMaster;
+  const queryPages=['consultas','workers','fontes','filas','atualizacoes'];
+  if (governance && !has(allowed,'business.view')) {
+    // The technical Master governs queries but holds no business data access: only governance pages, never indicators.
+    const tabs=[['acesso','Primeiro acesso'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],['atualizacoes','Atualizações'],
+      ...(has(allowed,'business.grants.manage')?[['permissoes','Permissões']]:[])];
+    const current=tabs.some(([key])=>key===page)?page:'consultas';
+    return <div className="nexora-business">
+      <nav className="bm-tabs" aria-label="Governança de consultas do Monitoramento de Negócios">{tabs.map(([key,text])=>
+        <button key={key} type="button" aria-current={current===key?'page':undefined} className={current===key?'active':''} onClick={()=>navigate(key)}>{text}</button>)}</nav>
+      {current==='acesso'?<BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} currentUserId={currentUserId} ui={ui} onDone={onAccessChange}/>
+        :current==='permissoes'?<BusinessP1 page="permissoes" tenantId={tenantId} access={access} request={requestRef.current} ui={ui}/>
+        :<BusinessQueries page={current} tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} ui={ui} navigate={navigate}/>}
+    </div>;
+  }
+  // A grant administrator without 'business.view' (e.g. the first administrator designated by the Master) can only
+  // manage permissions: show that page alone, so the grant chain (Master -> administrator -> Master) is reachable.
+  if (access.enabled && has(allowed,'business.grants.manage') && !has(allowed,'business.view'))
+    return <div className="nexora-business">
+      <p className="info-banner">Você administra os acessos do Monitoramento de Negócios desta Empresa. Conceda as permissões necessárias aos usuários; as demais telas dependem da permissão de visualização.</p>
+      <MasterQuickGrant request={requestRef.current} />
+      <BusinessP1 page="permissoes" tenantId={tenantId} access={access} request={requestRef.current} ui={ui} />
+    </div>;
   if (!access.enabled || !has(allowed,'business.view'))
     return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} currentUserId={currentUserId} ui={ui} onDone={onAccessChange} />;
   const openNew=()=>{setEditing(null);navigate('monitoramentos/novo');};
@@ -128,9 +190,10 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
   const filtered=indicators.filter(x=>`${x.name} ${x.code}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="nexora-business">
     {!isForm && <nav className="bm-tabs" aria-label="Navegação do Monitoramento de Negócios">
-      {[['visao-geral','Visão Geral'],['monitoramentos','Monitoramentos'],['ocorrencias','Ocorrências'],['processos','Processos'],['regras','Regras'],['conectores','Conectores'],['unidades','Unidades'],['notificacoes','Notificações'],['relatorios','Relatórios'],['permissoes','Permissões']].filter(([key])=>key!=='conectores'||has(allowed,'business.source.manage')).filter(([key])=>key!=='relatorios'||has(allowed,'business.export')).filter(([key])=>key!=='permissoes'||has(allowed,'business.grants.manage')).filter(([key])=>key!=='regras'||has(allowed,'business.view')).map(([key,label])=><button key={key} type="button" aria-current={page===key?'page':undefined} className={page===key?'active':''} onClick={()=>navigate(key)}>{label}</button>)}
+      {[['visao-geral','Visão Geral'],['monitoramentos','Monitoramentos'],['ocorrencias','Ocorrências'],['processos','Processos'],['regras','Regras'],['conectores','Conectores'],['unidades','Unidades'],['notificacoes','Notificações'],['relatorios','Relatórios'],['consultas','Consultas'],['workers','Workers'],['fontes','Fontes'],['filas','Filas'],['atualizacoes','Atualizações'],['permissoes','Permissões']].filter(([key])=>!['workers','fontes','filas','atualizacoes'].includes(key)||isMaster).filter(([key])=>key!=='conectores'||has(allowed,'business.source.manage')).filter(([key])=>key!=='relatorios'||has(allowed,'business.export')).filter(([key])=>key!=='permissoes'||has(allowed,'business.grants.manage')).filter(([key])=>key!=='regras'||has(allowed,'business.view')).map(([key,label])=><button key={key} type="button" aria-current={page===key?'page':undefined} className={page===key?'active':''} onClick={()=>navigate(key)}>{label}</button>)}
     </nav>}
-    {message && <div role="alert" className="bm-error">{message}</div>}
+    {message==='ok' && <div role="status" className="info-banner">Administração concedida. Peça ao usuário indicado para entrar no Nexora: ele verá a tela de Permissões e poderá conceder acesso a você.</div>}
+    {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {busy && <p role="status">Carregando ou salvando informações...</p>}
     {isForm ? (
       canWrite ? <FormPage title={editable?'Editar monitoramento':'Novo monitoramento de negócio'} description="Informações e limites serão avaliados apenas após uma fonte autorizada enviar dados reais." onBack={()=>navigate('monitoramentos')}>
@@ -151,7 +214,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
           <FormActions onCancel={()=>navigate('monitoramentos')} submitting={busy} submitLabel={editable?'Salvar alterações':'Criar monitoramento'}/>
         </form> : <p>Registro não encontrado ou acesso insuficiente.</p>}
       </FormPage> : <p>Acesso negado para criar ou editar monitoramentos.</p>
-    ) : ['processos','regras','conectores','unidades','notificacoes','relatorios','permissoes'].includes(page) ? <BusinessP1 page={page} tenantId={tenantId} access={access} request={requestRef.current} ui={ui} /> : page==='monitoramentos' ? <ListPage title="Monitoramentos de Negócios" eyebrow="NEXORA › BUSINESS MONITOR" description="Indicadores independentes de infraestrutura, com permissão por Empresa." actions={has(allowed,'business.monitor.create')?<button type="button" className="primary" onClick={openNew}>+ Novo monitoramento</button>:null}
+    ) : queryPages.includes(page) ? <BusinessQueries page={page} tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} ui={ui} navigate={navigate}/> : ['processos','regras','conectores','unidades','notificacoes','relatorios','permissoes'].includes(page) ? <BusinessP1 page={page} tenantId={tenantId} access={access} request={requestRef.current} ui={ui} /> : page==='monitoramentos' ? <ListPage title="Monitoramentos de Negócios" eyebrow="NEXORA › BUSINESS MONITOR" description="Indicadores independentes de infraestrutura, com permissão por Empresa." actions={has(allowed,'business.monitor.create')?<button type="button" className="primary" onClick={openNew}>+ Novo monitoramento</button>:null}
       metrics={<MetricGroup items={[{label:'Cadastrados',value:indicators.length},{label:'Críticos',value:health?.counts?.critico??'—'},{label:'Sem dados',value:health?.counts?.sem_dados??'—'}]}/>}
       filters={<FilterBar><label>Pesquisar <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Código ou nome" /></label><button type="button" onClick={reload}>Atualizar</button></FilterBar>}>
       <DataGrid rows={filtered} columns={[{key:'name',label:'Indicador'},{key:'code',label:'Código'},{key:'unit',label:'Unidade'},

@@ -1,0 +1,14 @@
+[Unit]
+Description=Backup full diário do Nexora (bancos, configuração e envio para a máquina de backup)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+Group=opc
+ExecStart=/opt/nexora/scripts/backup-daily.sh
+# Backup de madrugada não pode competir com a operação: baixa prioridade de CPU e de disco.
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=2h

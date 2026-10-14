@@ -223,12 +223,12 @@ def create_unit(payload:UnitCreate,tenant_id:str=Depends(tenant_header),identity
 def processes(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
     actor,grant=authorize(identity,tenant_id,'business.view')
     with tenant_connection(tenant_id) as db:
-        rows=list(db.execute('''SELECT p.*,u.name AS unit_name,d.name AS department_name,
+        rows=list(db.execute('''SELECT p.*,p.id AS process_id,u.name AS unit_name,d.name AS department_name,
          (SELECT count(*) FROM cm_business_process_steps s WHERE s.tenant_id=p.tenant_id AND s.process_id=p.id) AS step_count
          FROM cm_business_processes p LEFT JOIN cm_business_units u ON (u.tenant_id=p.tenant_id AND u.id=p.unit_id)
          LEFT JOIN cm_departments d ON (d.tenant_id=p.tenant_id AND d.id=p.department_id)
-         WHERE p.tenant_id=%s AND p.active ORDER BY p.name LIMIT 500''',(tenant_id,)).fetchall())
-    return visible(rows,actor,grant)
+         WHERE p.tenant_id=%s AND p.active ORDER BY p.name LIMIT 5000''',(tenant_id,)).fetchall())
+    return visible(rows,actor,grant)[:500]  # scope first, then cap
 
 @router.post('/processes',status_code=201)
 def create_process(payload:ProcessCreate,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
@@ -237,6 +237,10 @@ def create_process(payload:ProcessCreate,tenant_id:str=Depends(tenant_header),id
     if grant['scope_type'] not in ('company','own','unit','department') or not has_scope(prototype,actor,grant):
         raise HTTPException(403,'Process outside grant scope')
     with tenant_connection(tenant_id) as db:
+        if payload.unit_id and not db.execute('SELECT 1 FROM cm_business_units WHERE tenant_id=%s AND id=%s AND active',(tenant_id,payload.unit_id)).fetchone():
+            raise HTTPException(404,'Unit not found')
+        if payload.department_id and not db.execute('SELECT 1 FROM cm_departments WHERE tenant_id=%s AND id=%s',(tenant_id,payload.department_id)).fetchone():
+            raise HTTPException(404,'Department not found')
         row=db.execute('''INSERT INTO cm_business_processes(tenant_id,name,description,unit_id,department_id,owner_user_id)
          VALUES(%s,%s,%s,%s,%s,%s) RETURNING *''',(tenant_id,payload.name,payload.description,payload.unit_id,payload.department_id,actor['id'])).fetchone()
         audit(db,tenant_id,actor,'create','business_process',row['id'])
@@ -246,7 +250,7 @@ def create_process(payload:ProcessCreate,tenant_id:str=Depends(tenant_header),id
 def steps(process_id:UUID,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
     actor,grant=authorize(identity,tenant_id,'business.view')
     with tenant_connection(tenant_id) as db:
-        parent=db.execute('SELECT * FROM cm_business_processes WHERE tenant_id=%s AND id=%s',(tenant_id,process_id)).fetchone()
+        parent=db.execute('SELECT *,id AS process_id FROM cm_business_processes WHERE tenant_id=%s AND id=%s',(tenant_id,process_id)).fetchone()
         if not parent or not has_scope(parent,actor,grant):raise HTTPException(404,'Process not found')
         return list(db.execute('''SELECT * FROM cm_business_process_steps
           WHERE tenant_id=%s AND process_id=%s ORDER BY ordinal''',(tenant_id,process_id)).fetchall())
@@ -255,7 +259,7 @@ def steps(process_id:UUID,tenant_id:str=Depends(tenant_header),identity:Identity
 def create_step(process_id:UUID,payload:StepCreate,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
     actor,grant=authorize(identity,tenant_id,'business.process.manage')
     with tenant_connection(tenant_id) as db:
-        parent=db.execute('SELECT * FROM cm_business_processes WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant_id,process_id)).fetchone()
+        parent=db.execute('SELECT *,id AS process_id FROM cm_business_processes WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant_id,process_id)).fetchone()
         if not parent or not has_scope(parent,actor,grant):raise HTTPException(404,'Process not found')
         if payload.predecessor_id:
             pred=db.execute('SELECT id,ordinal FROM cm_business_process_steps WHERE tenant_id=%s AND process_id=%s AND id=%s',
@@ -275,7 +279,7 @@ def create_step(process_id:UUID,payload:StepCreate,tenant_id:str=Depends(tenant_
 def change_step(step_id:UUID,payload:StepAction,tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity)):
     actor,grant=authorize(identity,tenant_id,'business.process.manage')
     with tenant_connection(tenant_id) as db:
-        row=db.execute('''SELECT s.*,p.owner_user_id AS process_owner,p.unit_id,p.department_id
+        row=db.execute('''SELECT s.*,p.owner_user_id AS process_owner,p.unit_id,p.department_id,p.id AS process_id
           FROM cm_business_process_steps s JOIN cm_business_processes p ON p.tenant_id=s.tenant_id AND p.id=s.process_id
           WHERE s.tenant_id=%s AND s.id=%s FOR UPDATE OF s''',(tenant_id,step_id)).fetchone()
         if not row or not has_scope({**row,'owner_user_id':row['process_owner']},actor,grant):raise HTTPException(404,'Step not found')
@@ -379,7 +383,8 @@ def publish_collector(collector_id:UUID,payload:CollectorPublish,tenant_id:str=D
         if row['created_by']==actor['id']:raise HTTPException(403,'Collector author cannot self-approve')
         if row['current_revision']!=payload.expected_revision:raise HTTPException(409,'Collector revision conflict')
         if row['state']=='suspended':raise HTTPException(409,'Suspended connector cannot be published')
-        config=safe_config(row['kind'],row['config'])
+        try: config=safe_config(row['kind'],row['config'])
+        except ValueError as exc: raise HTTPException(422,str(exc)) from exc
         rev=row['current_revision']+1
         digest=hashlib.sha256(json.dumps(config,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         db.execute('''INSERT INTO cm_business_collector_revisions(tenant_id,collector_id,revision,config,sha256,approved_by)
@@ -416,7 +421,9 @@ def rollback_collector(collector_id:UUID,payload:CollectorPublish,tenant_id:str=
           AND revision=%s''',(tenant_id,collector_id,row['current_revision']-1)).fetchone()
         if not old:raise HTTPException(409,'Prior revision missing')
         # Rollback is a NEW revision so audit history never rewrites previous versions.
-        config=safe_config(row['kind'],old['config']); rev=row['current_revision']+1
+        try: config=safe_config(row['kind'],old['config'])
+        except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+        rev=row['current_revision']+1
         digest=hashlib.sha256(json.dumps(config,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         db.execute('''INSERT INTO cm_business_collector_revisions(tenant_id,collector_id,revision,config,sha256,approved_by)
           VALUES(%s,%s,%s,%s,%s,%s)''',(tenant_id,collector_id,rev,Jsonb(config),digest,actor['id']))
@@ -440,9 +447,9 @@ def notifications(tenant_id:str=Depends(tenant_header),identity:Identity=Depends
           FROM cm_business_notifications n JOIN cm_business_occurrences o
             ON o.tenant_id=n.tenant_id AND o.id=n.occurrence_id
           JOIN cm_business_indicators i ON i.tenant_id=o.tenant_id AND i.id=o.indicator_id
-          WHERE n.tenant_id=%s AND n.recipient_user_id=%s ORDER BY n.created_at DESC LIMIT 100''',
+          WHERE n.tenant_id=%s AND n.recipient_user_id=%s ORDER BY n.created_at DESC LIMIT 1000''',
           (tenant_id,actor['id'])).fetchall())
-    return visible(rows,actor,grant)
+    return visible(rows,actor,grant)[:100]
 
 @router.get('/reports/indicators')
 def indicator_report(tenant_id:str=Depends(tenant_header),identity:Identity=Depends(current_identity),
@@ -451,8 +458,8 @@ def indicator_report(tenant_id:str=Depends(tenant_header),identity:Identity=Depe
     with tenant_connection(tenant_id) as db:
         rows=list(db.execute('''SELECT i.*,s.state,s.last_value,s.last_collected_at,s.evaluated_at
           FROM cm_business_indicators i LEFT JOIN cm_business_states s ON s.tenant_id=i.tenant_id AND s.indicator_id=i.id
-          WHERE i.tenant_id=%s ORDER BY i.name LIMIT %s''',(tenant_id,limit)).fetchall())
-    rows=visible(rows,actor,grant)
+          WHERE i.tenant_id=%s ORDER BY i.name LIMIT 5000''',(tenant_id,)).fetchall())
+    rows=visible(rows,actor,grant)[:limit]
     return {'data_as_of':datetime.now(UTC),'rows':rows,'count':len(rows),
             'financial_exposure':None,'financial_exposure_reason':'No verified financial methodology'}
 
@@ -484,7 +491,7 @@ def eligible_users(tenant_id:str=Depends(tenant_header),identity:Identity=Depend
     actor=_actor(identity,tenant_id)
     with tenant_connection(tenant_id) as db:
         _require_grant_admin(db,tenant_id,actor)
-        return list(db.execute("""SELECT DISTINCT u.id,u.display_name,u.email FROM cm_users u
+        return list(db.execute("""SELECT DISTINCT u.id,u.display_name,u.email,u.is_master FROM cm_users u
             JOIN cm_access_grants g ON g.user_id=u.id
             WHERE g.tenant_id=%s AND g.active AND u.active
              AND g.valid_from<=now() AND (g.valid_until IS NULL OR g.valid_until>now())

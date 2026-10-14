@@ -30,7 +30,7 @@ export default function BusinessP1({page,tenantId,access,request,ui}){
       const extras=[];
       if(['regras','conectores','notificacoes','relatorios'].includes(page))extras.push(call.current('/api/v1/business/indicators'));
       else extras.push(Promise.resolve([]));
-      if(['processos','conectores','permissoes'].includes(page))extras.push(call.current('/api/v1/business/units'));
+      if(['processos','conectores','permissoes'].includes(page))extras.push(page==='permissoes'?call.current('/api/v1/business/units').catch(()=>[]):call.current('/api/v1/business/units')); // a grant administrator may lack business.view
       else extras.push(Promise.resolve([]));
       if(page==='conectores')extras.push(call.current('/api/v1/business/hubs'));
       else extras.push(Promise.resolve([]));
@@ -69,7 +69,7 @@ export default function BusinessP1({page,tenantId,access,request,ui}){
   const run=async(fn)=>{setBusy(true);setError('');try{await fn();await back();}catch(e){setError(e.message||'Falha na operação');}finally{setBusy(false);}};
   const canCreate=page==='unidades'||page==='processos'?yes(perms,'business.process.manage'):
     page==='regras'?yes(perms,'business.rule.manage'):
-    page==='conectores'?yes(perms,'business.source.manage'):
+    page==='conectores'?false:  // legacy HUB collectors are retired: the infrastructure agent no longer runs them
     page==='permissoes'?yes(perms,'business.grants.manage'):false;
   const openSteps=async(row)=>{route('steps',row);try{setSteps(await call.current(`/api/v1/business/processes/${row.id}/steps`));}catch(e){setError(e.message);}};
   const submit=async(event)=>{
@@ -182,13 +182,7 @@ export default function BusinessP1({page,tenantId,access,request,ui}){
       {key:'actions',label:'Ação',render:r=>yes(perms,'business.rule.manage')?<button onClick={()=>route('edit',r)}>Editar regra</button>:'—'}],
     conectores:[{key:'name',label:'Coleta'},{key:'kind',label:'Tipo'},
       {key:'indicator_name',label:'Indicador'},{key:'state',label:'Estado'},
-      {key:'current_revision',label:'Versão'},{key:'actions',label:'Ações',render:r=><div className="bm-row-actions">
-      {yes(perms,'business.collector.test')&&<button onClick={()=>run(()=>call.current(`/api/v1/business/collectors/${r.id}/test`,apiBody('POST',{})))}>Validar</button>}
-      {yes(perms,'business.collector.publish')&&<button onClick={()=>run(()=>call.current(`/api/v1/business/collectors/${r.id}/publish`,apiBody('POST',
-        {expected_revision:r.current_revision,reason:'Publicação técnica aprovada'})))}>Publicar</button>}
-      {yes(perms,'business.collector.publish')&&r.current_revision>1&&<button onClick={()=>run(()=>call.current(`/api/v1/business/collectors/${r.id}/rollback`,apiBody('POST',
-        {expected_revision:r.current_revision,reason:'Rollback técnico aprovado'})))}>Reverter</button>}
-      </div>}],
+      {key:'current_revision',label:'Versão'}],
     notificacoes:[{key:'title',label:'Evento'},{key:'message',label:'Mensagem'},
       {key:'created_at',label:'Data',render:x=>fmt(x.created_at)}],
     relatorios:[{key:'name',label:'Indicador'},{key:'code',label:'Código'},{key:'state',label:'Estado'},
@@ -204,6 +198,7 @@ export default function BusinessP1({page,tenantId,access,request,ui}){
      filters={<FilterBar><button type="button" onClick={refresh} disabled={busy}>Atualizar</button></FilterBar>}>
      {error&&<p role="alert" className="bm-error">{error}</p>}
      {busy&&<p role="status">Carregando...</p>}
+     {page==='conectores'&&<p role="note" className="bm-notice">Os coletores por HUB foram substituídos pelos monitores de consulta, gerenciados apenas pelo Master (API <code>/api/v1/master/business</code>) e executados pelo Business Worker, um serviço separado do agente de infraestrutura. Os coletores abaixo são apenas histórico.</p>}
      {page==='conectores'&&glpi&&<form className="bm-glpi-form" aria-labelledby="bm-glpi-title" onSubmit={e=>{
        e.preventDefault();const reason=new FormData(e.currentTarget).get('reason');
        setBusy(true);setError('');
