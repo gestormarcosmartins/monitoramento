@@ -196,6 +196,24 @@ async function api(path, token, options = {}, tenant = "") {
   }
   return b;
 }
+const RULE_EVENTS = [
+  ["incident.created", "Chamado criado (falha)"],
+  ["incident.resolved", "Chamado resolvido (normalizado)"],
+  ["incident.acknowledged", "Chamado reconhecido"],
+  ["incident.in_progress", "Chamado em andamento"],
+];
+const RULE_EVENT_LABEL = Object.fromEntries(RULE_EVENTS);
+const RULE_CHANNEL_LABEL = { email: "E-mail", whatsapp: "WhatsApp", webhook: "Webhook" };
+const RULE_TARGET = {
+  email: { type: "email", placeholder: "nome@empresa.com.br", hint: "Endereço de e-mail que receberá o aviso." },
+  whatsapp: {
+    type: "text", placeholder: "5511999999999 ou 1203630...@g.us", pattern: "(\\d{10,15}|[A-Za-z0-9._\\-]+@g\\.us)",
+    title: "Número com país e DDD, só dígitos (ex.: 5511999999999), ou identificador do grupo terminado em @g.us",
+    hint: "Número com país e DDD, só dígitos (ex.: 5511999999999), ou o identificador do grupo, que termina em @g.us. O envio exige o WhatsApp homologado para a Empresa.",
+  },
+  webhook: { type: "url", placeholder: "https://exemplo.com/aviso", hint: "Endereço HTTPS que receberá o aviso em JSON." },
+};
+
 const menu = [
     ["dashboard", "Dashboard", "home"],
     ["portal", "Portal", "catalog"],
@@ -1489,7 +1507,7 @@ function App() {
   const closeAgentForm = () => { setEditingAgent(null); setAgentEnrollment(null); setView("admin-agents"); };
   const openAgentForm = (agent = null) => { setEditingAgent(agent || { id: null }); setAgentEnrollment(null); setViewState("admin-agents"); window.scrollTo({ top: 0, behavior: "instant" }); const path=agent?.id?`/administracao/agentes/${encodeURIComponent(agent.id)}/editar`:"/administracao/agentes/novo"; if(location.pathname!==path)history.pushState({},"",path); };
   const closeRuleForm = () => { setEditingRule(null); setView("settings-notifications"); };
-  const openRuleForm = (rule = null) => { setEditingRule(rule || { id:null,channel:"email",minimum_priority:"low",events:["incident.created","incident.resolved","incident.in_progress"],active:true }); setViewState("settings-notifications"); const path=rule?.id?`/configuracoes/notificacoes/${encodeURIComponent(rule.id)}/editar`:"/configuracoes/notificacoes/nova"; if(location.pathname!==path)history.pushState({},"",path); };
+  const openRuleForm = (rule = null) => { setEditingRule(rule || { id:null,channel:"email",minimum_priority:"high",events:["incident.created","incident.resolved"],active:true }); setViewState("settings-notifications"); const path=rule?.id?`/configuracoes/notificacoes/${encodeURIComponent(rule.id)}/editar`:"/configuracoes/notificacoes/nova"; if(location.pathname!==path)history.pushState({},"",path); };
   const closeMaintenanceForm = () => { setEditingMaintenance(null); setView("admin-maintenance"); };
   const openMaintenanceForm = (window = null) => { setEditingMaintenance(window || { id:null,active:true }); setViewState("admin-maintenance"); const path=window?.id?`/administracao/janelas-manutencao/${encodeURIComponent(window.id)}/editar`:"/administracao/janelas-manutencao/nova"; if(location.pathname!==path)history.pushState({},"",path); };
   const closeTenantForm = () => { setEditingTenant(null); setView("clients"); };
@@ -3783,16 +3801,17 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
               )}
               {view === "settings-notifications" && (
               editingRule ? <FormPage title={editingRule.id?"Editar regra de notificação":"Nova regra de notificação"} description={`${tenant?.name||"Empresa selecionada"} · defina canal, destino e prioridade mínima.`} onBack={closeRuleForm}>
-                <form className="nexora-form" onSubmit={async(event)=>{event.preventDefault();if(ruleSubmitting||!tenantId)return;const f=new FormData(event.currentTarget);setRuleSubmitting(true);await run(async()=>{const body={name:f.get("name"),channel:f.get("channel"),target:f.get("target"),minimum_priority:f.get("priority"),events:editingRule.events||["incident.created","incident.resolved","incident.in_progress"],active:editingRule.active??true};await api(`/api/v1/notification-rules${editingRule.id?`/${editingRule.id}`:""}`,token,{method:editingRule.id?"PUT":"POST",body:JSON.stringify(body)},tenantId);await refresh();closeRuleForm();},editingRule.id?"Regra atualizada com sucesso.":"Regra criada com sucesso.");setRuleSubmitting(false);}}><FormSection title="Regra"><Input label="Empresa" value={tenant?.name||""} readOnly/><Input name="name" label="Nome" defaultValue={editingRule.name||""} required/><label className="field"><span>Canal</span><select name="channel" defaultValue={editingRule.channel||"email"}><option value="email">E-mail</option><option value="webhook">Webhook</option></select></label><Input name="target" label="Destino" defaultValue={editingRule.target||""} required/><label className="field"><span>Prioridade mínima</span><select name="priority" defaultValue={editingRule.minimum_priority||"low"}>{["low","medium","high","critical"].map((value)=><option key={value} value={value}>{translated(value)}</option>)}</select></label></FormSection><FormActions onCancel={closeRuleForm} submitting={ruleSubmitting} submitLabel={editingRule.id?"Salvar regra":"Criar regra"}/></form>
+                <form className="nexora-form" onSubmit={async(event)=>{event.preventDefault();if(ruleSubmitting||!tenantId)return;const f=new FormData(event.currentTarget);setRuleSubmitting(true);await run(async()=>{const events=[...f.getAll("events"),...(editingRule.events||[]).filter((e)=>!RULE_EVENTS.some(([v])=>v===e))];if(!events.length)throw new Error("Selecione pelo menos um evento para a regra.");const body={name:f.get("name"),channel:f.get("channel"),target:String(f.get("target")).trim(),minimum_priority:f.get("priority"),events,active:editingRule.active??true};await api(`/api/v1/notification-rules${editingRule.id?`/${editingRule.id}`:""}`,token,{method:editingRule.id?"PUT":"POST",body:JSON.stringify(body)},tenantId);await refresh();closeRuleForm();},editingRule.id?"Regra atualizada com sucesso.":"Regra criada com sucesso.");setRuleSubmitting(false);}}><FormSection title="Regra"><Input label="Empresa" value={tenant?.name||""} readOnly/><Input name="name" label="Nome" defaultValue={editingRule.name||""} required/><label className="field"><span>Canal</span><select name="channel" value={editingRule.channel||"email"} onChange={(e)=>setEditingRule((r)=>({...r,channel:e.target.value}))}><option value="email">E-mail</option><option value="whatsapp">WhatsApp</option><option value="webhook">Webhook</option></select></label><Input key={editingRule.channel||"email"} name="target" label="Destino" defaultValue={editingRule.target||""} required type={(RULE_TARGET[editingRule.channel||"email"]||RULE_TARGET.email).type} placeholder={(RULE_TARGET[editingRule.channel||"email"]||RULE_TARGET.email).placeholder} pattern={(RULE_TARGET[editingRule.channel||"email"]||RULE_TARGET.email).pattern} title={(RULE_TARGET[editingRule.channel||"email"]||RULE_TARGET.email).title} aria-describedby="rule-target-hint"/><p id="rule-target-hint" className="field-hint">{(RULE_TARGET[editingRule.channel||"email"]||RULE_TARGET.email).hint}</p><label className="field"><span>Prioridade mínima</span><select name="priority" defaultValue={editingRule.minimum_priority||"low"}>{["low","medium","high","critical"].map((value)=><option key={value} value={value}>{translated(value)}</option>)}</select></label></FormSection><FormSection title="Quando avisar"><fieldset className="rule-events"><legend className="visually-hidden">Eventos que disparam o aviso</legend>{RULE_EVENTS.map(([value,label])=><label key={value}><input type="checkbox" name="events" value={value} defaultChecked={(editingRule.events||[]).includes(value)}/> {label}</label>)}</fieldset></FormSection><FormActions onCancel={closeRuleForm} submitting={ruleSubmitting} submitLabel={editingRule.id?"Salvar regra":"Criar regra"}/></form>
               </FormPage> : <section className="panel">
                 <h2>Notificações</h2>
                 <div className="list-page-heading"><p>Regras de distribuição por canal e severidade.</p><button className="primary" onClick={()=>openRuleForm()}>＋ Nova regra</button></div>
                 <DataGrid
                   columns={[
                     { key: "name", label: "Regra" },
-                    { key: "channel", label: "Canal" },
+                    { key: "channel", label: "Canal", render: (r) => RULE_CHANNEL_LABEL[r.channel] || r.channel },
                     { key: "target", label: "Destino" },
                     { key: "minimum_priority", label: "Prioridade" },
+                    { key: "events", label: "Eventos", render: (r) => (r.events || []).map((e) => RULE_EVENT_LABEL[e] || e).join(", ") || "—" },
                     {
                       key: "active",
                       label: "Estado",

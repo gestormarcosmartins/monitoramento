@@ -1,14 +1,18 @@
+import logging
 import re
 import smtplib
 from email.message import EmailMessage
 from typing import Any
 
 import httpx
+from psycopg.types.json import Jsonb
 
 from .db import connect, tenant_connection
+from .notification_format import build_notification, load_context, must_wait_for_glpi
 from .secrets import decrypt_secret, encrypt_secret
 from .settings import get_settings
 
+logger = logging.getLogger(__name__)
 PRIORITY = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
@@ -161,20 +165,31 @@ def _send_webhook(target: str, payload: dict[str, Any]) -> None:
     response.raise_for_status()
 
 
-def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
+def _iso(moment: Any) -> str | None:
+    return moment.isoformat() if moment is not None else None
+
+
+def deliver_notifications(tenant_id: str, incident_id: str, event: str, attempt: int = 0) -> None:
     with tenant_connection(tenant_id) as connection:
         incident = connection.execute("SELECT id,title,status,priority,created_at FROM cm_incidents WHERE tenant_id=%s AND id=%s", (tenant_id,incident_id)).fetchone()
         if not incident: return
+        ctx = load_context(connection, tenant_id, incident_id)
         rules = list(connection.execute("SELECT * FROM cm_notification_rules WHERE tenant_id=%s AND active AND %s=ANY(events)", (tenant_id,event)).fetchall())
+    if ctx and must_wait_for_glpi(event, ctx, attempt):
+        raise RuntimeError("Aguardando o número do chamado GLPI para compor o aviso")  # o outbox tenta de novo em segundos
     from .push import deliver_push
     deliver_push(tenant_id, incident_id, event, incident)
     from .expo_push import create_infra_notification
     create_infra_notification(tenant_id, incident_id, event, incident)
     failures = []
+    targeted: int | None = None
     try:
-        _deliver_responsible_contacts(tenant_id, incident_id, event, incident)
+        targeted = _deliver_responsible_contacts(tenant_id, incident_id, event, incident, ctx)
     except Exception as error:
         failures.append(str(error))
+    applicable_rules = [rule for rule in rules if PRIORITY.get(incident["priority"],2) >= PRIORITY.get(rule["minimum_priority"],3)]
+    if targeted == 0 and not applicable_rules:
+        _record_no_recipient(tenant_id, incident_id, event)
     for rule in rules:
         if PRIORITY.get(incident["priority"],2) < PRIORITY.get(rule["minimum_priority"],3): continue
         with tenant_connection(tenant_id) as connection:
@@ -183,10 +198,13 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
                 SET attempts=cm_notification_deliveries.attempts+1 RETURNING *""", (tenant_id,rule["id"],incident_id,event,rule["channel"],rule["target"])).fetchone()
         if delivery["status"] == "sent":
             continue
-        payload = {"event":event,"incident_id":incident_id,"title":incident["title"],"status":incident["status"],"priority":incident["priority"]}
-        message = f"Nexora: {incident['title']}\nEvento: {event}\nPrioridade: {incident['priority']}\nEstado: {incident['status']}"
+        subject, message = build_notification(event, ctx or {"title": incident["title"], "priority": incident["priority"]})
+        payload = {"event":event,"incident_id":incident_id,"title":incident["title"],"status":incident["status"],"priority":incident["priority"],
+                   "cliente":(ctx or {}).get("cliente"),"monitor":(ctx or {}).get("monitor"),"glpi_chamado_numero":(ctx or {}).get("glpi_ticket_id"),
+                   "glpi_status_integracao":(ctx or {}).get("sync_status"),"inicio_ocorrencia":_iso((ctx or {}).get("inicio")),
+                   "fim_ocorrencia":_iso((ctx or {}).get("resolved_at")),"mensagem":message}
         try:
-            if rule["channel"] == "email": send_email(tenant_id, rule["target"], f"Nexora: {incident['title']}", message)
+            if rule["channel"] == "email": send_email(tenant_id, rule["target"], subject, message)
             elif rule["channel"] == "whatsapp": send_whatsapp(tenant_id, rule["target"], message)
             else: _send_webhook(rule["target"], payload)
             with tenant_connection(tenant_id) as connection:
@@ -199,8 +217,17 @@ def deliver_notifications(tenant_id: str, incident_id: str, event: str) -> None:
         raise RuntimeError("; ".join(failures))
 
 
-def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, incident: dict[str, Any]) -> None:
-    """Deliver service alerts to its team and/or technician with retry-safe deduplication."""
+RESPONSIBLE_EVENTS = ("incident.created", "incident.resolved")
+
+
+def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, incident: dict[str, Any], ctx: dict[str, Any] | None = None) -> int | None:
+    """Avisa a equipe/técnico responsável do monitor, com deduplicação segura para retentativas.
+
+    Só falha (incident.created) e recuperação (incident.resolved) usam este caminho; reconhecimento, mudanças de estado e SLA
+    seguem apenas as regras de notificação. Devolve None quando não se aplica e, caso contrário, quantos destinos havia.
+    """
+    if event not in RESPONSIBLE_EVENTS:
+        return None
     with tenant_connection(tenant_id) as connection:
         route = connection.execute(
             """SELECT m.responsible_team_id,m.responsible_user_id,m.notify_on_failure,m.notify_on_recovery,
@@ -214,16 +241,16 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
             (tenant_id,incident_id),
         ).fetchone()
         if not route:
-            return
+            return None
         members = list(connection.execute(
             """SELECT u.email,u.whatsapp_number FROM cm_team_members tm JOIN cm_users u ON u.id=tm.user_id
             WHERE tm.tenant_id=%s AND tm.team_id=%s AND u.active""",
             (tenant_id,route["responsible_team_id"]),
         ).fetchall()) if route["responsible_team_id"] else []
     if event == "incident.created" and not route["notify_on_failure"]:
-        return
+        return None
     if event == "incident.resolved" and not route["notify_on_recovery"]:
-        return
+        return None
     emails = set(route["emails"] or [])
     whatsapp = set(route["whatsapp_numbers"] or [])
     whatsapp.update(route["whatsapp_group_ids"] or [])
@@ -236,8 +263,12 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
     for member in members:
         if member["email"]: emails.add(member["email"])
         if member["whatsapp_number"]: whatsapp.add(member["whatsapp_number"])
-    label = "FALHA" if event == "incident.created" else "NORMALIZADO"
-    message = f"Nexora - {label}\n{incident['title']}\nPrioridade: {incident['priority']}\nEstado: {incident['status']}"
+    if not emails and not whatsapp:
+        return 0
+    if ctx is None:
+        with tenant_connection(tenant_id) as connection:
+            ctx = load_context(connection, tenant_id, incident_id)
+    subject, message = build_notification(event, ctx or {"title": incident["title"], "priority": incident["priority"]})
     failures = []
     for channel, targets in (("email",emails),("whatsapp",whatsapp)):
         for target in targets:
@@ -250,7 +281,7 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
             if delivery["status"] == "sent":
                 continue
             try:
-                if channel == "email": send_email(tenant_id,target,f"Nexora - {label}: {incident['title']}",message)
+                if channel == "email": send_email(tenant_id,target,subject,message)
                 else: send_whatsapp(tenant_id,target,message)
                 with tenant_connection(tenant_id) as connection:
                     connection.execute("UPDATE cm_routing_deliveries SET status='sent',sent_at=now(),last_error=NULL WHERE tenant_id=%s AND id=%s",(tenant_id,delivery["id"]))
@@ -260,3 +291,19 @@ def _deliver_responsible_contacts(tenant_id: str, incident_id: str, event: str, 
                     connection.execute("UPDATE cm_routing_deliveries SET status='failed',last_error=%s WHERE tenant_id=%s AND id=%s",(str(error)[:1000],tenant_id,delivery["id"]))
     if failures:
         raise RuntimeError("; ".join(failures))
+    return len(emails) + len(whatsapp)
+
+
+def _record_no_recipient(tenant_id: str, incident_id: str, event: str) -> None:
+    """Deixa visível na linha do tempo do chamado que o aviso não saiu por falta de destinatário (uma vez por evento)."""
+    logger.warning("notification_no_recipient", extra={"tenant_id": tenant_id, "incident_id": incident_id, "event": event})
+    with tenant_connection(tenant_id) as connection:
+        connection.execute(
+            """INSERT INTO cm_incident_history(tenant_id,incident_id,event_type,details)
+            SELECT %s,%s,'notification.skipped',%s
+            WHERE NOT EXISTS (SELECT 1 FROM cm_incident_history WHERE tenant_id=%s AND incident_id=%s
+                AND event_type='notification.skipped' AND details->>'event'=%s)""",
+            (tenant_id, incident_id,
+             Jsonb({"event": event, "reason": "no_recipients",
+                    "hint": "Defina a equipe ou o usuário responsável do monitor, ou crie uma regra de notificação."}),
+             tenant_id, incident_id, event))

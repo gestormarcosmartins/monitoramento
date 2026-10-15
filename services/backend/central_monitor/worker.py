@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from .db import connect, migrate, tenant_connection
 from .glpi import GlpiClient
+from .failure_grace import effective_grace_seconds, must_wait
 from .notifications import deliver_notifications
 from .expo_push import process_push_deliveries, process_push_receipts
 from .settings import get_settings
@@ -91,11 +92,21 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
     state = "up" if ok else "down"
     alert_fingerprint = fingerprint(str(monitor["id"]))
     with tenant_connection(tenant_id) as connection:
-        connection.execute(
-            "UPDATE cm_monitors SET last_checked_at=now(),last_status=%s,last_message=%s WHERE id=%s",
-            (state, message, monitor["id"]),
-        )
+        timing = connection.execute(
+            """UPDATE cm_monitors SET last_checked_at=now(),last_status=%s,last_message=%s,
+            failing_since=CASE WHEN %s THEN NULL ELSE COALESCE(failing_since,now()) END
+            WHERE id=%s RETURNING EXTRACT(EPOCH FROM (now()-failing_since)) AS failing_seconds""",
+            (state, message, ok, monitor["id"]),
+        ).fetchone()
         if not ok:
+            grace = effective_grace_seconds(monitor, get_settings().monitor_push_failure_grace_seconds)
+            if grace > 0:
+                already_open = connection.execute(
+                    "SELECT 1 FROM cm_alerts WHERE tenant_id=%s AND fingerprint=%s AND status='open'",
+                    (tenant_id, alert_fingerprint),
+                ).fetchone()
+                if must_wait(timing["failing_seconds"] if timing else None, grace, bool(already_open)):
+                    return  # carência: o monitor segue "down" no painel, mas ainda não vira alerta/chamado
             # A plain UPDATE-then-INSERT avoids relying on ON CONFLICT inference against
             # cm_alerts_open_fingerprint_key (a partial unique index on status='open'):
             # Postgres' conflict-target matching against a partial index predicate proved
@@ -109,11 +120,12 @@ def record_result(monitor: dict[str, Any], ok: bool, message: str) -> None:
             if not alert:
                 alert = connection.execute(
                     """
-                    INSERT INTO cm_alerts(tenant_id,monitor_id,fingerprint,severity,title,message)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                    INSERT INTO cm_alerts(tenant_id,monitor_id,fingerprint,severity,title,message,failure_started_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,now() - make_interval(secs => %s))
                     RETURNING id,title
                     """,
-                    (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message),
+                    (tenant_id, monitor["id"], alert_fingerprint, monitor["severity"], f"{monitor['name']} indisponivel", message,
+                     float((timing or {}).get("failing_seconds") or 0)),
                 ).fetchone()
             incident = connection.execute(
                 """
@@ -456,7 +468,7 @@ def process_outbox() -> None:
                 from .business_glpi import sync_occurrence
                 sync_occurrence(str(row["tenant_id"]),row["payload"]["occurrence_id"],row["payload"]["event"])
             elif row["topic"] == "notification.requested":
-                deliver_notifications(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["event"])
+                deliver_notifications(str(row["tenant_id"]),row["payload"]["incident_id"],row["payload"]["event"],attempt=int(row["attempts"] or 0))
             elif row["topic"] == "monitor.created":
                 provision_zabbix_monitor(str(row["tenant_id"]),row["payload"]["monitor_id"])
             elif row["topic"] == "action.validated":
