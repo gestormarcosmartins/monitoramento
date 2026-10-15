@@ -3,19 +3,19 @@
     "name": "Nexora",
     "slug": "nexora",
     "scheme": "nexora",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "br.com.simmservices.nexora"
     },
     "android": {
       "package": "br.com.simmservices.nexora",
-      "versionCode": 14,
+      "versionCode": 15,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0B1F3B",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -35,6 +35,15 @@
           "defaultChannel": "alerts",
           "color": "#2563FF"
         }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B1F3B",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
       ]
     ],
     "extra": {
@@ -42,6 +51,7 @@
         "projectId": "e875294a-6fb4-416d-9eeb-805c29a44a8b"
       }
     },
-    "owner": "marcos.martins"
+    "owner": "marcos.martins",
+    "backgroundColor": "#0B1F3B"
   }
 }

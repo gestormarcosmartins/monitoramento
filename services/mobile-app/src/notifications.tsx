@@ -12,7 +12,7 @@ export type NotificationItem = {
 };
 
 const SEVERITY: Record<string, { label: string; color: string }> = {
-  P0: { label: 'Crítica', color: C.danger }, P1: { label: 'Alta', color: C.warning }, P2: { label: 'Média', color: C.blue }, P3: { label: 'Baixa', color: C.muted },
+  P0: { label: 'Crítica', color: C.danger }, P1: { label: 'Alta', color: C.warning }, P2: { label: 'Média', color: C.blueText }, P3: { label: 'Baixa', color: C.muted },
 };
 const POLL_MS = 60000;
 const fmt = (value: string) => new Date(value).toLocaleString('pt-BR');
@@ -111,7 +111,7 @@ const s = StyleSheet.create({
   cardUnread: { borderColor: C.blue, borderLeftWidth: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sev: { fontWeight: '800', fontSize: 12 },
-  unread: { color: C.blue, fontWeight: '700', fontSize: 12 },
+  unread: { color: C.blueText, fontWeight: '700', fontSize: 12 },
   title: { color: C.text, fontWeight: '800', fontSize: 16 },
   body: { color: C.text, fontSize: 14 },
   meta: { color: C.muted, fontSize: 12 },

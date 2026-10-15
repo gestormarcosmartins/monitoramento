@@ -183,16 +183,16 @@ function Header({ context, updatedAt }: { context: string; updatedAt: Date | nul
 
 const s = StyleSheet.create({
   page: { padding: 18, paddingBottom: 32, gap: 16 }, section: { gap: 10 }, sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, sectionAction: { minHeight: 44, justifyContent: 'center' },
-  eyebrow: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 1 }, h1: { color: C.text, fontSize: 26, lineHeight: 32, fontWeight: '800' }, h2: { color: C.text, fontSize: 18, fontWeight: '700' },
+  eyebrow: { color: C.blueText, fontSize: 12, fontWeight: '800', letterSpacing: 1 }, h1: { color: C.text, fontSize: 26, lineHeight: 32, fontWeight: '800' }, h2: { color: C.text, fontSize: 18, fontWeight: '700' },
   muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
   kpis: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  kpi: { flexGrow: 1, flexBasis: '47%', backgroundColor: 'white', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
+  kpi: { flexGrow: 1, flexBasis: '47%', backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
   kpiBar: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 5 }, kpiValue: { color: C.text, fontSize: 28, fontWeight: '900', marginLeft: 4 }, kpiLabel: { color: C.text, fontSize: 13, fontWeight: '700', marginLeft: 4 }, kpiNote: { color: C.muted, fontSize: 11, marginLeft: 4 },
-  stack: { flexDirection: 'row', height: 16, borderRadius: 8, overflow: 'hidden', backgroundColor: '#E2E8F0' }, legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 }, swatch: { width: 12, height: 12, borderRadius: 3 }, legendText: { color: C.text, fontSize: 13 }, legendNumber: { fontWeight: '800' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'white', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border, minHeight: 56 }, grow: { flex: 1 }, alignEnd: { alignItems: 'flex-end' },
+  stack: { flexDirection: 'row', height: 16, borderRadius: 8, overflow: 'hidden', backgroundColor: '#16335C' }, legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 }, swatch: { width: 12, height: 12, borderRadius: 3 }, legendText: { color: C.text, fontSize: 13 }, legendNumber: { fontWeight: '800' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.card, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border, minHeight: 56 }, grow: { flex: 1 }, alignEnd: { alignItems: 'flex-end' },
   rowTitle: { color: C.text, fontSize: 15, fontWeight: '700' }, count: { color: C.text, fontSize: 22, fontWeight: '900' }, countLabel: { color: C.muted, fontSize: 11 },
   stateTag: { flexDirection: 'row', alignItems: 'center', gap: 6 }, stateText: { color: C.text, fontSize: 12, fontWeight: '800' },
-  errorBox: { backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, errorTitle: { color: '#991B1B', fontWeight: '800' }, errorText: { color: '#7F1D1D', fontSize: 13 },
-  retry: { minHeight: 44, borderRadius: 10, borderWidth: 1, borderColor: '#FECACA', backgroundColor: 'white', alignItems: 'center', justifyContent: 'center' }, retryText: { color: '#991B1B', fontWeight: '800' },
-  warnBox: { backgroundColor: '#FFF7ED', borderColor: '#FED7AA', borderWidth: 1, borderRadius: 12, padding: 12, gap: 6 }, warnText: { color: '#9A3412', fontSize: 13, lineHeight: 18 }, link: { color: C.blue, fontWeight: '800', minHeight: 44, textAlignVertical: 'center' },
+  errorBox: { backgroundColor: '#3B1620', borderColor: '#7F2A35', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, errorTitle: { color: '#FCA5A5', fontWeight: '800' }, errorText: { color: '#FCA5A5', fontSize: 13 },
+  retry: { minHeight: 44, borderRadius: 10, borderWidth: 1, borderColor: '#7F2A35', backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' }, retryText: { color: '#FCA5A5', fontWeight: '800' },
+  warnBox: { backgroundColor: '#3A2A12', borderColor: '#7C4A12', borderWidth: 1, borderRadius: 12, padding: 12, gap: 6 }, warnText: { color: '#FDBA74', fontSize: 13, lineHeight: 18 }, link: { color: C.blueText, fontWeight: '800', minHeight: 44, textAlignVertical: 'center' },
 });

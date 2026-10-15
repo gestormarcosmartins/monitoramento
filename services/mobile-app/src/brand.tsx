@@ -2,7 +2,7 @@ import React from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { C } from './theme';
 
-// O simbolo e PROVISORIO (ver LEIA-ME do pacote de assets): substituir pelo ativo oficial aprovado.
+// PROVISORIO: reconstrucao do kit visual (NAO e o arquivo oficial aprovado). Substituir pelo master oficial antes de publicar.
 const symbol = require('../assets/nexora-symbol-provisorio.png');
 
 export function Brand({ compact = false }: { compact?: boolean }) {
@@ -19,7 +19,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
 
 const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  symbol: { width: 52, height: 46, borderRadius: 8 }, symbolSmall: { width: 44, height: 39, borderRadius: 7 },
+  symbol: { width: 52, height: 52 }, symbolSmall: { width: 40, height: 40 },
   word: { color: 'white', fontSize: 30, letterSpacing: 3, fontWeight: '300' }, wordSmall: { fontSize: 24, letterSpacing: 2.5 },
   tag: { color: C.onNavyMuted, fontSize: 12, marginTop: -2 },
 });

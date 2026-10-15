@@ -113,7 +113,7 @@ function ListShell<T extends Hit>({ state, eyebrow, title, contextLabel, options
         })}
       </View>
       <View style={s.search}>
-        <TextInput value={text} onChangeText={setText} onSubmitEditing={submitSearch} returnKeyType="search" placeholder="Buscar por nome" placeholderTextColor="#91A0B5" autoCapitalize="none" accessibilityLabel={`Buscar ${title.toLowerCase()}`} style={s.input} />
+        <TextInput value={text} onChangeText={setText} onSubmitEditing={submitSearch} returnKeyType="search" placeholder="Buscar por nome" placeholderTextColor="#7F93B0" autoCapitalize="none" accessibilityLabel={`Buscar ${title.toLowerCase()}`} style={s.input} />
         <Pressable accessibilityRole="button" onPress={submitSearch} style={s.searchButton}><Text style={s.searchText}>Buscar</Text></Pressable>
         {text ? <Pressable accessibilityRole="button" accessibilityLabel="Limpar busca" onPress={clearSearch} style={s.clearButton}><Text style={s.clearText}>✕</Text></Pressable> : null}
       </View>
@@ -209,23 +209,23 @@ export function ServicesScreen({ state, contextLabel, consolidated, asset, clear
 
 const s = StyleSheet.create({
   page: { padding: 18, paddingBottom: 32, gap: 10 }, header: { gap: 10, marginBottom: 4 },
-  eyebrow: { color: C.blue, fontSize: 12, fontWeight: '800', letterSpacing: 1 }, h1: { color: C.text, fontSize: 26, lineHeight: 32, fontWeight: '800' }, muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, chip: { minHeight: 44, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: C.border, backgroundColor: 'white', justifyContent: 'center' }, chipOn: { backgroundColor: C.blue, borderColor: C.blue },
+  eyebrow: { color: C.blueText, fontSize: 12, fontWeight: '800', letterSpacing: 1 }, h1: { color: C.text, fontSize: 26, lineHeight: 32, fontWeight: '800' }, muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, chip: { minHeight: 44, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, justifyContent: 'center' }, chipOn: { backgroundColor: C.blue, borderColor: C.blue },
   chipText: { color: C.text, fontWeight: '700', fontSize: 14 }, chipTextOn: { color: 'white' },
-  search: { flexDirection: 'row', gap: 8, alignItems: 'center' }, input: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: 12, paddingHorizontal: 12, backgroundColor: 'white', color: C.text, fontSize: 15 },
+  search: { flexDirection: 'row', gap: 8, alignItems: 'center' }, input: { flex: 1, minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: 12, paddingHorizontal: 12, backgroundColor: C.card, color: C.text, fontSize: 15 },
   searchButton: { minHeight: 48, paddingHorizontal: 14, borderRadius: 12, backgroundColor: C.blue, justifyContent: 'center' }, searchText: { color: 'white', fontWeight: '800' },
-  clearButton: { minHeight: 48, minWidth: 44, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center' }, clearText: { color: C.muted, fontWeight: '800' },
+  clearButton: { minHeight: 48, minWidth: 44, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' }, clearText: { color: C.muted, fontWeight: '800' },
   summary: { color: C.text, fontSize: 13, fontWeight: '700' },
-  assetChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1, borderRadius: 12, paddingLeft: 12 }, assetText: { flex: 1, color: '#1E3A8A', fontWeight: '700' }, assetClear: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
-  card: { flexDirection: 'row', backgroundColor: 'white', borderRadius: 14, borderWidth: 1, borderColor: C.border, overflow: 'hidden', minHeight: 64 }, bar: { width: 6 }, cardBody: { flex: 1, padding: 12, gap: 4 },
+  assetChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#12305C', borderColor: '#27508F', borderWidth: 1, borderRadius: 12, paddingLeft: 12 }, assetText: { flex: 1, color: '#BFDBFE', fontWeight: '700' }, assetClear: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  card: { flexDirection: 'row', backgroundColor: C.card, borderRadius: 14, borderWidth: 1, borderColor: C.border, overflow: 'hidden', minHeight: 64 }, bar: { width: 6 }, cardBody: { flex: 1, padding: 12, gap: 4 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 }, severity: { color: C.text, fontSize: 12, fontWeight: '800' }, ago: { color: C.muted, fontSize: 12, marginLeft: 'auto' },
-  stale: { color: '#92400E', fontSize: 11, fontWeight: '800', backgroundColor: '#FEF3C7', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
+  stale: { color: '#FDE68A', fontSize: 11, fontWeight: '800', backgroundColor: '#3D3010', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, overflow: 'hidden' },
   title: { color: C.text, fontSize: 15, fontWeight: '700' }, details: { gap: 4, marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border }, message: { color: C.text, fontSize: 13, lineHeight: 19 },
-  link: { minHeight: 44, justifyContent: 'center' }, linkText: { color: C.blue, fontWeight: '800' },
-  warn: { backgroundColor: '#FFF7ED', borderColor: '#FED7AA', borderWidth: 1, borderRadius: 12, padding: 12, gap: 4 }, warnText: { color: '#9A3412', fontSize: 13, lineHeight: 18 }, errorInline: { color: '#B91C1C', fontSize: 13 },
+  link: { minHeight: 44, justifyContent: 'center' }, linkText: { color: C.blueText, fontWeight: '800' },
+  warn: { backgroundColor: '#3A2A12', borderColor: '#7C4A12', borderWidth: 1, borderRadius: 12, padding: 12, gap: 4 }, warnText: { color: '#FDBA74', fontSize: 13, lineHeight: 18 }, errorInline: { color: '#FCA5A5', fontSize: 13 },
   empty: { color: C.muted, textAlign: 'center', paddingVertical: 32 },
-  notice: { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, noticeTitle: { color: '#1E3A8A', fontWeight: '800' },
-  errorBox: { backgroundColor: '#FEF2F2', borderColor: '#FECACA', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, errorTitle: { color: '#991B1B', fontWeight: '800' }, errorText: { color: '#7F1D1D', fontSize: 13 },
-  retry: { minHeight: 44, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center' }, retryText: { color: C.text, fontWeight: '800' },
-  more: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center', marginTop: 4 }, moreText: { color: C.text, fontWeight: '800' },
+  notice: { backgroundColor: '#12305C', borderColor: '#27508F', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, noticeTitle: { color: '#BFDBFE', fontWeight: '800' },
+  errorBox: { backgroundColor: '#3B1620', borderColor: '#7F2A35', borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }, errorTitle: { color: '#FCA5A5', fontWeight: '800' }, errorText: { color: '#FCA5A5', fontSize: 13 },
+  retry: { minHeight: 44, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' }, retryText: { color: C.text, fontWeight: '800' },
+  more: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', marginTop: 4 }, moreText: { color: C.text, fontWeight: '800' },
 });

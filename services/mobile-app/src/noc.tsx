@@ -51,7 +51,7 @@ function Summary({ summary }: { summary: NocData['summary'] }) {
     { label: 'Críticos', value: summary.critical, color: STATUS.critical },
     { label: 'Atenção', value: summary.attention, color: STATUS.attention },
     { label: 'Operacionais', value: summary.operational, color: STATUS.healthy },
-    { label: 'Sem comunicação', value: summary.no_communication, color: '#64748B' },
+    { label: 'Sem comunicação', value: summary.no_communication, color: '#9DB2CE' },
   ];
   return (
     <View style={s.summary}>
@@ -78,7 +78,7 @@ function Card({ item, showCompany }: { item: NocEnvironment; showCompany: boolea
           <Text style={s.title}>{item.environment}</Text>
           {showCompany ? <Text style={s.muted}>{item.company}</Text> : null}
         </View>
-        <View style={[s.badge, { backgroundColor: status.color + '22' }]}><Text style={[s.badgeText, { color: item.status === 'attention' ? '#92400E' : status.color }]}>{status.label}</Text></View>
+        <View style={[s.badge, { backgroundColor: status.color + '22' }]}><Text style={[s.badgeText, { color: item.status === 'attention' ? '#FDE68A' : status.color }]}>{status.label}</Text></View>
       </View>
       <Text style={s.meta}>{parts.join(' · ')}</Text>
       {item.services.length ? (
@@ -158,23 +158,23 @@ export function NocScreen({ noc, consolidated, contextLabel }: { noc: ReturnType
 const s = StyleSheet.create({
   page: { padding: 18, paddingBottom: 32, gap: 12 }, header: { gap: 12, marginBottom: 4 },
   titleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  kicker: { color: C.blue, fontSize: 13, fontWeight: '800', letterSpacing: 1.5 }, h1: { color: C.text, fontSize: 26, fontWeight: '800' },
+  kicker: { color: C.blueText, fontSize: 13, fontWeight: '800', letterSpacing: 1.5 }, h1: { color: C.text, fontSize: 26, fontWeight: '800' },
   muted: { color: C.muted, fontSize: 12 },
   summary: { flexDirection: 'row', gap: 8 },
   kpi: { flex: 1, minHeight: 84, backgroundColor: C.card, borderRadius: 14, borderWidth: 1, borderColor: C.border, padding: 10, paddingTop: 12, overflow: 'hidden' },
   kpiBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4 }, kpiValue: { color: C.text, fontSize: 24, fontWeight: '800' }, kpiLabel: { color: C.muted, fontSize: 11 },
-  search: { minHeight: 44, borderWidth: 1, borderColor: C.border, borderRadius: 12, backgroundColor: 'white', paddingHorizontal: 14, color: C.text, fontSize: 15 },
+  search: { minHeight: 44, borderWidth: 1, borderColor: C.border, borderRadius: 12, backgroundColor: C.card, paddingHorizontal: 14, color: C.text, fontSize: 15 },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filter: { minHeight: 44, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: C.border, backgroundColor: 'white', justifyContent: 'center' }, filterOn: { backgroundColor: C.blue, borderColor: C.blue },
+  filter: { minHeight: 44, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, justifyContent: 'center' }, filterOn: { backgroundColor: C.blue, borderColor: C.blue },
   filterText: { color: C.text, fontSize: 13, fontWeight: '600' }, filterTextOn: { color: 'white' },
   card: { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, borderTopWidth: 4, padding: 14, gap: 10 },
   cardHead: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' }, title: { color: C.text, fontSize: 17, fontWeight: '800' },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }, badgeText: { fontSize: 12, fontWeight: '800' },
   meta: { color: C.text, fontSize: 13 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: '#F8FAFC', maxWidth: '100%' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: '#0F2747', maxWidth: '100%' },
   dot: { width: 8, height: 8, borderRadius: 4 }, chipText: { color: C.text, fontSize: 12, flexShrink: 1 }, chipState: { color: C.muted, fontSize: 12 },
   foot: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 },
   center: { alignItems: 'center', gap: 10, paddingVertical: 40 }, emptyText: { color: C.muted, textAlign: 'center', paddingVertical: 32 },
-  error: { backgroundColor: '#FEE2E2', borderRadius: 12, padding: 12 }, errorText: { color: '#991B1B', fontSize: 13 },
+  error: { backgroundColor: '#4A1D26', borderRadius: 12, padding: 12 }, errorText: { color: '#FCA5A5', fontSize: 13 },
 });

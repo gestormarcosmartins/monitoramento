@@ -38,7 +38,7 @@ export function MonitoringHub({ section, setSection, dashboard, alerts, environm
 }
 
 const s = StyleSheet.create({
-  segment: { flexDirection: 'row', margin: 12, marginBottom: 0, padding: 4, borderRadius: 14, backgroundColor: '#E2E8F0', gap: 4 },
-  segmentItem: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }, segmentOn: { backgroundColor: 'white' },
-  segmentText: { color: C.muted, fontWeight: '700', fontSize: 13 }, segmentTextOn: { color: C.blue, fontWeight: '800' },
+  segment: { flexDirection: 'row', margin: 12, marginBottom: 0, padding: 4, borderRadius: 14, backgroundColor: '#16335C', gap: 4 },
+  segmentItem: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }, segmentOn: { backgroundColor: C.card },
+  segmentText: { color: C.muted, fontWeight: '700', fontSize: 13 }, segmentTextOn: { color: C.blueText, fontWeight: '800' },
 });
