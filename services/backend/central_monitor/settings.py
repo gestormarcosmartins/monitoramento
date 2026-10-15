@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     keycloak_admin_username: str = Field(default="", alias="KEYCLOAK_ADMIN_USERNAME")
     keycloak_admin_password: str = Field(default="", alias="KEYCLOAK_ADMIN_PASSWORD")
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
+    monitor_push_failure_grace_seconds: int = Field(default=600, ge=0, le=86400, alias="MONITOR_PUSH_FAILURE_GRACE_SECONDS")
     monitor_interval_seconds: int = Field(default=30, ge=10, alias="MONITOR_INTERVAL_SECONDS")
     action_execution_enabled: bool = Field(default=False, alias="ACTION_EXECUTION_ENABLED")
     expo_access_token: str = Field(default="", alias="EXPO_ACCESS_TOKEN")
