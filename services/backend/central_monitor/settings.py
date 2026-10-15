@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     oidc_issuer: str = Field(default="", alias="OIDC_ISSUER")
     oidc_jwks_url: str = Field(default="", alias="OIDC_JWKS_URL")
     oidc_audience: str = Field(default="central-monitor", alias="OIDC_AUDIENCE")
+    oidc_extra_clients: str = Field(default="nexora-mobile", alias="OIDC_EXTRA_CLIENTS")
     keycloak_base_url: str = Field(default="http://keycloak:8080/auth", alias="KEYCLOAK_BASE_URL")
     keycloak_realm: str = Field(default="central-monitor", alias="KEYCLOAK_REALM")
     keycloak_admin_username: str = Field(default="", alias="KEYCLOAK_ADMIN_USERNAME")

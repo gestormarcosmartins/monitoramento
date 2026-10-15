@@ -42,13 +42,44 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["${CENTRAL_PUBLIC_URL}/*", "nexora://auth"],
-      "webOrigins": ["${CENTRAL_PUBLIC_URL}"],
+      "redirectUris": [
+        "${CENTRAL_PUBLIC_URL}/*",
+        "nexora://auth"
+      ],
+      "webOrigins": [
+        "${CENTRAL_PUBLIC_URL}"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "${CENTRAL_PUBLIC_URL}/*##nexora://auth",
         "use.refresh.tokens": "true"
       }
+    },
+    {
+      "clientId": "nexora-mobile",
+      "name": "Nexora Mobile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "use.refresh.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-central-monitor",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "central-monitor",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ]
 }
