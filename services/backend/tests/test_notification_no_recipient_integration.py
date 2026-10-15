@@ -54,7 +54,7 @@ class NoRecipientFlow(unittest.TestCase):
 
     def send(self, incident_id, event):
         with mock.patch.object(notifications, "send_email") as email, mock.patch.object(notifications, "send_whatsapp") as whats:
-            notifications.deliver_notifications(self.tenant, incident_id, event)
+            notifications.deliver_notifications(self.tenant, incident_id, event, attempt=3)
         return email, whats
 
     def test_without_recipient_the_incident_shows_why_and_only_once(self):
@@ -69,7 +69,7 @@ class NoRecipientFlow(unittest.TestCase):
         email, _ = self.send(incident_id, "incident.created")
         self.assertEqual(email.call_count, 1)
         self.assertEqual(email.call_args.args[1], "equipe@t.test")
-        self.assertIn("FALHA", email.call_args.args[2])
+        self.assertIn("ALERTA", email.call_args.args[2])
         self.assertEqual(self.skipped(incident_id), 0)
 
     def test_recovery_message_says_normalized(self):
