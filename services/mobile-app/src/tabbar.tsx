@@ -3,14 +3,13 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconName } from './icons';
 import { C } from './theme';
 
-export type TabKey = 'home' | 'tickets' | 'new' | 'monitoring' | 'noc' | 'settings';
+export type TabKey = 'home' | 'monitoring' | 'alerts' | 'tickets' | 'settings';
 export type MonitoringBadge = { count: number; critical?: number; level: 'none' | 'attention' | 'critical' };
 const TABS: Array<{ key: TabKey; label: string; icon: IconName }> = [
   { key: 'home', label: 'Início', icon: 'inicio' },
+  { key: 'monitoring', label: 'Monitorar', icon: 'monitoramento' },
+  { key: 'alerts', label: 'Alertas', icon: 'alerta' },
   { key: 'tickets', label: 'Chamados', icon: 'chamados' },
-  { key: 'new', label: 'Novo', icon: 'novo' },
-  { key: 'monitoring', label: 'Monitoramento', icon: 'monitoramento' },
-  { key: 'noc', label: 'NOC', icon: 'noc' },
   { key: 'settings', label: 'Mais', icon: 'mais' },
 ];
 
@@ -21,7 +20,7 @@ export function TabBar({ active, onChange, monitoringBadge }: { active: TabKey; 
     <View style={s.bar} accessibilityRole="tablist">
       {TABS.map((tab) => {
         const on = tab.key === active;
-        const badge = tab.key === 'monitoring' && monitoringBadge && monitoringBadge.level !== 'none' ? monitoringBadge : null;
+        const badge = tab.key === 'alerts' && monitoringBadge && monitoringBadge.level !== 'none' ? monitoringBadge : null;
         const label = badge ? `${tab.label}, ${badge.count} alerta(s) aberto(s)${badge.level === 'critical' ? `, ${badge.critical} crítico(s)` : ''}` : tab.label;
         return (
           <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={label} onPress={() => onChange(tab.key)} style={[s.tab, on && s.tabOn]}>

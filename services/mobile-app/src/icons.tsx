@@ -1,7 +1,7 @@
 import React from 'react';
 import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
 
-export type IconName = 'inicio' | 'chamados' | 'novo' | 'mais' | 'servidor' | 'nuvem' | 'empresa' | 'sair' | 'seta' | 'monitoramento' | 'noc';
+export type IconName = 'inicio' | 'chamados' | 'novo' | 'mais' | 'servidor' | 'nuvem' | 'empresa' | 'sair' | 'seta' | 'monitoramento' | 'noc' | 'sino' | 'alerta';
 
 // Icones do pacote Nexora_Mobile_Assets (viewBox 24x24, traco 1.8). "seta" e complementar.
 export function Icon({ name, color = '#2563EB', size = 24 }: { name: IconName; color?: string; size?: number }) {
@@ -18,6 +18,8 @@ export function Icon({ name, color = '#2563EB', size = 24 }: { name: IconName; c
       {name === 'sair' && <Path {...common} d="M10 17l5-5-5-5M15 12H3M12 3h6a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-6" />}
       {name === 'seta' && <Path {...common} d="M5 12h14M13 6l6 6-6 6" />}
       {name === 'monitoramento' && <><Rect {...common} x={2} y={3} width={20} height={14} rx={2} /><Path {...common} d="M8 21h8M12 17v4" /><Path {...common} d="M5 10h3l2-3 3 6 2-3h4" /></>}
+      {name === 'sino' && <Path {...common} d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0" />}
+      {name === 'alerta' && <Path {...common} d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />}
       {name === 'noc' && <><Rect {...common} x={3} y={4} width={7} height={7} rx={1.5} /><Rect {...common} x={14} y={4} width={7} height={7} rx={1.5} /><Rect {...common} x={3} y={14} width={7} height={7} rx={1.5} /><Path {...common} d="M14 17.5h3l1.5-2.5 2 5" /></>}
     </Svg>
   );
