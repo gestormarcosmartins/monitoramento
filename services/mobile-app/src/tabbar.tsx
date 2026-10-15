@@ -37,9 +37,9 @@ export function TabBar({ active, onChange, monitoringBadge }: { active: TabKey; 
 }
 
 const s = StyleSheet.create({
-  bar: { flexDirection: 'row', backgroundColor: 'white', borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 4, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 16 : 8, gap: 2 },
+  bar: { flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 4, paddingTop: 6, paddingBottom: Platform.OS === 'ios' ? 16 : 8, gap: 2 },
   tab: { flex: 1, minHeight: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 2 }, tabOn: { backgroundColor: C.blueSoft },
-  label: { color: C.muted, fontSize: 11, fontWeight: '600' }, labelOn: { color: C.blue, fontWeight: '800' },
-  badge: { position: 'absolute', top: -5, right: -10, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'white' },
+  label: { color: C.muted, fontSize: 11, fontWeight: '600' }, labelOn: { color: C.blueText, fontWeight: '800' },
+  badge: { position: 'absolute', top: -5, right: -10, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: C.card },
   badgeCritical: { backgroundColor: '#DC2626' }, badgeAttention: { backgroundColor: '#F59E0B' }, badgeText: { color: 'white', fontSize: 10, fontWeight: '800' }, badgeTextDark: { color: '#1F2937' },
 });

@@ -53,7 +53,8 @@ def current_identity(
         audiences = claims.get("aud", [])
         if isinstance(audiences, str):
             audiences = [audiences]
-        if settings.oidc_audience not in audiences and claims.get("azp") != settings.oidc_audience:
+        allowed_clients = {settings.oidc_audience, *(c.strip() for c in settings.oidc_extra_clients.split(",") if c.strip())}
+        if settings.oidc_audience not in audiences and claims.get("azp") not in allowed_clients:
             raise jwt.InvalidAudienceError("Token was not issued for this client")
     except jwt.PyJWTError as error:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from error

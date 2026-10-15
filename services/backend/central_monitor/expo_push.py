@@ -485,6 +485,30 @@ def open_notification(notification_id: UUID, tenant_id: str = Depends(tenant_hea
     return _mark(notification_id, tenant_id, identity, "opened_at")
 
 
+@router.post("/{notification_id}/lida")
+def mark_notification_read(notification_id: UUID, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    """Marca uma notificação como lida sem navegar. Idempotente: repetir não muda a data de leitura."""
+    _mark(notification_id, tenant_id, identity, "opened_at")
+    return {"id": str(notification_id), "read": True}
+
+
+@router.post("/marcar-lidas")
+def mark_all_read(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
+    """Marca como lidas todas as pendentes do usuário nesta empresa (só os domínios a que ele tem acesso agora).
+    Não apaga nada: o evento, a entrega e a auditoria permanecem; só sai da lista de pendentes."""
+    user = _member(identity, tenant_id)
+    with tenant_connection(tenant_id) as connection:
+        rows = connection.execute(
+            """UPDATE nx_notification_recipients r SET opened_at=now()
+            FROM nx_notifications n WHERE n.id=r.notification_id AND r.tenant_id=%s AND r.user_id=%s
+            AND r.opened_at IS NULL AND n.domain=ANY(%s) RETURNING r.notification_id""",
+            (tenant_id, user["id"], user["domains"])).fetchall()
+        connection.execute(
+            "INSERT INTO nx_push_audit(tenant_id,actor,action,metadata) VALUES (%s,%s,'notification.read_all',%s)",
+            (tenant_id, user["id"], Jsonb({"count": len(rows)})))
+    return {"updated": len(rows)}
+
+
 @router.post("/{notification_id}/confirmar")
 def acknowledge_notification(notification_id: UUID, tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)) -> dict[str, Any]:
     return _mark(notification_id, tenant_id, identity, "acknowledged_at")
