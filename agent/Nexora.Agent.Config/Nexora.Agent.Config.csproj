@@ -11,6 +11,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Mesmo codigo do agente: nome logico, conexao segura e senha protegida das fontes de negocio. -->
+    <Compile Include="..\Nexora.Agent\BusinessSupport.cs" />
+    <Compile Include="..\Nexora.Agent\AgentOptions.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>

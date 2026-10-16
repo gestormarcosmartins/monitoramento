@@ -30,24 +30,37 @@ public interface ICentralApi
 public sealed class CentralApi : ICentralApi
 {
     private readonly HttpClient _http;
-    private readonly WorkerOptions _options;
-    private readonly string _token;
+    private readonly Action<HttpRequestMessage> _authenticate;
 
     public CentralApi(HttpClient http, WorkerOptions options, string token)
+        : this(http, options.ServerUrl, request =>
+        {
+            request.Headers.Add("X-Tenant-ID", options.TenantId);
+            request.Headers.Add("X-Worker-ID", options.WorkerId);
+            request.Headers.Add("X-Worker-Token", token);
+        }) { }
+
+    /// <summary>Embedded mode: the worker runs inside the monitoring agent and authenticates as that agent (no worker token).</summary>
+    public static CentralApi ForAgent(HttpClient http, string serverUrl, string tenantId, string agentId, string agentToken) =>
+        new(http, serverUrl, request =>
+        {
+            request.Headers.Add("X-Tenant-ID", tenantId);
+            request.Headers.Add("X-Agent-ID", agentId);
+            request.Headers.Add("X-Agent-Token", agentToken);
+        });
+
+    private CentralApi(HttpClient http, string serverUrl, Action<HttpRequestMessage> authenticate)
     {
         _http = http;
-        _options = options;
-        _token = token;
-        _http.BaseAddress = new Uri(options.ServerUrl.TrimEnd('/') + "/");
+        _authenticate = authenticate;
+        _http.BaseAddress = new Uri(serverUrl.TrimEnd('/') + "/");
         _http.Timeout = TimeSpan.FromSeconds(30);
     }
 
     private HttpRequestMessage Request(HttpMethod method, string path, object? body = null)
     {
         var request = new HttpRequestMessage(method, path) { Content = body is null ? null : JsonContent.Create(body, body.GetType()) };
-        request.Headers.Add("X-Tenant-ID", _options.TenantId);
-        request.Headers.Add("X-Worker-ID", _options.WorkerId);
-        request.Headers.Add("X-Worker-Token", _token);
+        _authenticate(request);
         return request;
     }
 

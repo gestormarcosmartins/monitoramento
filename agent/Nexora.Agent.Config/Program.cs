@@ -57,6 +57,15 @@ internal sealed class ConfigurationForm : Form
     private readonly NumericUpDown _bennerInterval = new() { Minimum = 300, Maximum = 86400, Value = 1800 };
     private readonly TextBox _bennerIngestToken = new() { UseSystemPasswordChar = true };
     private readonly TextBox _bennerTenantId = new();
+    private readonly CheckBox _bizEnabled = new() { Text = "Habilitar consultas de negócio neste agente", AutoSize = true };
+    private readonly TextBox _bizRef = new();
+    private readonly TextBox _bizServer = new();
+    private readonly TextBox _bizDatabase = new();
+    private readonly TextBox _bizUser = new();
+    private readonly TextBox _bizPassword = new() { UseSystemPasswordChar = true };
+    private readonly CheckBox _bizTrust = new() { Text = "Confiar no certificado do servidor (SQL Server local com certificado autoassinado)", AutoSize = true };
+    private readonly Button _bizTest = new() { Text = "Testar conexão", AutoSize = true };
+    private readonly BusinessSecretStore _bizSecrets = new();
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
@@ -86,6 +95,8 @@ internal sealed class ConfigurationForm : Form
         var database = new TabPage("Banco de Dados") { Padding = new Padding(22), AutoScroll = true };
         tabs.TabPages.Add(parameters);
         tabs.TabPages.Add(database);
+        var business = new TabPage("Consultas de negócio") { Padding = new Padding(22), AutoScroll = true };
+        tabs.TabPages.Add(business);
         root.Controls.Add(tabs, 0, 0);
 
         var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(0) };
@@ -122,6 +133,20 @@ internal sealed class ConfigurationForm : Form
         Add(sqlGrid, "Intervalo Benner (segundos)", _bennerInterval, "Padrão: 1800 segundos (30 minutos), igual ao coletor original.");
         Add(sqlGrid, "Token de ingestão Benner", _bennerIngestToken, "Token compartilhado (não é o token de cadastro do agente). Deixe em branco para manter o valor já salvo nesta máquina.");
         Add(sqlGrid, "Tenant Benner", _bennerTenantId, "GUID do tenant Nexora que recebe os diagnósticos.");
+
+        var bizGrid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        bizGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+        bizGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        business.Controls.Add(bizGrid);
+        Add(bizGrid, "Consultas de negócio", _bizEnabled, "O agente executa, neste servidor, as consultas de leitura aprovadas na Central. Antes, o Master cria o worker deste agente em Negócios > Workers.");
+        Add(bizGrid, "Nome lógico da fonte", _bizRef, "Minúsculas, números e _ (ex.: jri_hub). Deve ser o mesmo nome da fonte cadastrada na Central.");
+        Add(bizGrid, "Servidor / instância", _bizServer, "Ex.: srvjribd\\SQLEXPRESS ou servidor,porta.");
+        Add(bizGrid, "Banco", _bizDatabase, "Banco consultado (ex.: JRI_HUB).");
+        Add(bizGrid, "Usuário SQL (somente leitura)", _bizUser, "Use uma conta dedicada com SELECT apenas nas views necessárias. Contas administradoras (sysadmin, como o sa) são recusadas.");
+        Add(bizGrid, "Senha SQL", _bizPassword, "Cifrada pelo Windows e nunca enviada à Central. Deixe em branco para manter a senha já salva.");
+        Add(bizGrid, "Certificado", _bizTrust, "A conexão é sempre criptografada. Marque apenas se o SQL Server usa certificado autoassinado e está nesta mesma máquina.");
+        Add(bizGrid, "Validação", _bizTest, "Conecta com o usuário informado e confere se ele é somente leitura.");
+        _bizTest.Click += async (_, _) => await TestBusinessAsync();
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(18, 12, 18, 10), BackColor = Color.WhiteSmoke };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -177,6 +202,13 @@ internal sealed class ConfigurationForm : Form
             _bennerInterval.Value = Number(agent, "BennerIntervalSeconds", 1800, _bennerInterval.Minimum, _bennerInterval.Maximum);
             _existingBennerIngestToken = String(agent, "BennerIngestToken", "");
             _bennerTenantId.Text = String(agent, "BennerTenantId", "");
+            _bizEnabled.Checked = Boolean(agent, "BusinessEnabled", false);
+            if (agent.TryGetProperty("BusinessSources", out var sources) && sources.ValueKind == JsonValueKind.Array && sources.GetArrayLength() > 0)
+            {
+                var first = sources[0];
+                _bizRef.Text = String(first, "Ref", ""); _bizServer.Text = String(first, "Server", ""); _bizDatabase.Text = String(first, "Database", "");
+                _bizUser.Text = String(first, "User", ""); _bizTrust.Checked = Boolean(first, "TrustServerCertificate", false);
+            }
             _status.Text = "Configuração instalada carregada.";
         }
         catch (Exception error) { _status.Text = $"Não foi possível ler a configuração atual: {error.Message}"; }
@@ -226,6 +258,42 @@ internal sealed class ConfigurationForm : Form
         return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(path),null,DataProtectionScope.LocalMachine));
     }
 
+    private BusinessSource? BusinessSourceFromForm() => !_bizEnabled.Checked ? null : new BusinessSource
+    {
+        Ref = _bizRef.Text.Trim(), Dialect = "sqlserver", Server = _bizServer.Text.Trim(), Database = _bizDatabase.Text.Trim(),
+        User = _bizUser.Text.Trim(), TrustServerCertificate = _bizTrust.Checked,
+    };
+
+    /// <summary>Conecta como o Worker conectara (criptografia obrigatoria) e recusa contas administradoras.</summary>
+    private async Task<string> ValidateBusinessAsync(BusinessSource source)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(source.Ref, "^[a-z][a-z0-9_]{1,63}$")) throw new InvalidOperationException("Nome lógico inválido: use minúsculas, números e _ (ex.: jri_hub).");
+        if (string.IsNullOrWhiteSpace(source.Server) || string.IsNullOrWhiteSpace(source.Database) || string.IsNullOrWhiteSpace(source.User)) throw new InvalidOperationException("Informe servidor, banco e usuário da fonte de negócio.");
+        var password = string.IsNullOrEmpty(_bizPassword.Text) ? _bizSecrets.Load(source.Ref) : _bizPassword.Text;
+        if (string.IsNullOrEmpty(password)) throw new InvalidOperationException("Informe a senha SQL da fonte de negócio.");
+        var builder = new SqlConnectionStringBuilder(BusinessConnection.Build(source, password)) { Encrypt = true, TrustServerCertificate = source.TrustServerCertificate, ConnectTimeout = 12, ApplicationName = "Nexora Agent Config" };
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("SELECT @@SERVERNAME, DB_NAME(), IS_SRVROLEMEMBER('sysadmin')", connection) { CommandTimeout = 15 };
+        await using var reader = await command.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        if (!reader.IsDBNull(2) && Convert.ToInt32(reader.GetValue(2)) == 1)
+            throw new InvalidOperationException("Este usuário é administrador do SQL Server (sysadmin). Para consultas de negocio use uma conta somente leitura (ex.: nexora_ro).");
+        return $"Conexão aprovada em {reader.GetString(0)} / {reader.GetString(1)} com usuário somente leitura.";
+    }
+
+    private async Task TestBusinessAsync()
+    {
+        try
+        {
+            _bizTest.Enabled = false; _status.Text = "Testando fonte de negócio...";
+            var source = new BusinessSource { Ref = _bizRef.Text.Trim(), Dialect = "sqlserver", Server = _bizServer.Text.Trim(), Database = _bizDatabase.Text.Trim(), User = _bizUser.Text.Trim(), TrustServerCertificate = _bizTrust.Checked };
+            _status.Text = await ValidateBusinessAsync(source);
+        }
+        catch (Exception error) { _status.Text = $"Falha na fonte de negócio: {error.Message}"; MessageBox.Show(this, error.Message, "Fonte de negócio reprovada", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally { _bizTest.Enabled = true; }
+    }
+
     private Uri ValidServer()
     {
         if (!Uri.TryCreate(_server.Text.Trim().TrimEnd('/'), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
@@ -263,6 +331,8 @@ internal sealed class ConfigurationForm : Form
         try
         {
             var server = ValidServer();
+            var businessSource = BusinessSourceFromForm();
+            if (businessSource is not null) ValidateBusinessAsync(businessSource).GetAwaiter().GetResult();  // recusa sysadmin e conexao invalida antes de instalar
             var sourceAgent = Path.Combine(AppContext.BaseDirectory, "Nexora.Agent.exe");
             if (!File.Exists(sourceAgent)) throw new FileNotFoundException("Nexora.Agent.exe não foi encontrado ao lado do configurador.");
             var credentialsPath = Path.Combine(
@@ -298,11 +368,15 @@ internal sealed class ConfigurationForm : Form
                     // same effective-enabled gate rather than its own independent condition.
                     BennerEnabled=EffectiveSqlEnabled&&_bennerEnabled.Checked,BennerIntervalSeconds=(int)_bennerInterval.Value,
                     BennerIngestToken=string.IsNullOrWhiteSpace(_bennerIngestToken.Text)?_existingBennerIngestToken:_bennerIngestToken.Text.Trim(),
-                    BennerTenantId=_bennerTenantId.Text.Trim()
+                    BennerTenantId=_bennerTenantId.Text.Trim(),
+                    BusinessEnabled = businessSource is not null,
+                    BusinessSources = businessSource is null ? Array.Empty<BusinessSource>() : new[] { businessSource }
                 }
             };
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
             if(!_integrated.Checked)SaveSqlPassword(_sqlPassword.Text);
+            if (businessSource is not null && !string.IsNullOrEmpty(_bizPassword.Text)) _bizSecrets.Save(businessSource.Ref, _bizPassword.Text);
+            _bizPassword.Clear();
             InstallScheduledTask(Path.Combine(InstallDirectory, "Nexora.Agent.exe"));
             _token.Clear();
             _status.Text = "Agente instalado e iniciado. A comunicação ocorrerá no intervalo configurado.";
