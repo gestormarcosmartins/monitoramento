@@ -65,6 +65,8 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [issuedToken, setIssuedToken] = useState(null);
+  const [linkedWorker, setLinkedWorker] = useState(null);
+  const [workerMode, setWorkerMode] = useState('agent');
   const [executions, setExecutions] = useState({items: [], page: 1, page_size: 25});
   const [result, setResult] = useState(null);
   const [testState, setTestState] = useState(null);
@@ -96,6 +98,7 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       } else if (page === 'workers') {
         data.items = await call.current('/api/v1/master/business/workers');
         if (segments[0] === 'novo' || sub === 'instalar') data.install = await call.current('/api/v1/master/business/install-info');
+        if (segments[0] === 'novo') data.agents = await call.current('/api/v1/master/business/agents');
       }
       else if (page === 'fontes') {
         data.items = await call.current('/api/v1/master/business/data-sources');
@@ -296,11 +299,23 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
         <InstallGuide info={aux.install} workerId={issuedToken.id} tenantId={tenantId}/>
         <div className="form-actions"><button type="button" className="primary" onClick={() => { setIssuedToken(null); navigate('workers'); }}>Concluir</button></div>
       </FormPage>;
+      if (linkedWorker) return <FormPage title="Worker vinculado ao agente" description="Nenhum token foi gerado: o worker usa a identidade do agente de monitoramento já instalado." onBack={() => { setLinkedWorker(null); navigate('workers'); }}>
+        <section className="form-section"><p className="bm-context">O worker <strong>{linkedWorker.name}</strong> foi vinculado ao agente. Para ele começar a executar consultas, abra o aplicativo <strong>Nexora Agent — Configuração</strong> na máquina do agente,
+          marque <strong>Consultas de negócio</strong>, informe a conexão do banco (usuário somente leitura), use <strong>Testar conexão</strong> e salve. O worker fica <strong>Online</strong> quando o agente enviar o primeiro sinal.</p></section>
+        <div className="form-actions"><button type="button" className="primary" onClick={() => { setLinkedWorker(null); navigate('workers'); }}>Concluir</button></div>
+      </FormPage>;
       return <FormPage title="Novo worker" description="Cada worker tem identidade, token e fila próprios e executa somente as fontes ligadas a ele." onBack={() => navigate('workers')}>
         {alerts}
         <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget).entries());
-          run(() => call.current('/api/v1/master/business/workers', post({name: f.name, capacity: Number(f.capacity)})), (out) => setIssuedToken(out)); }}>
-          <FormSection title="Identificação"><Field name="name" label="Nome do worker" required minLength="2" maxLength="120"/>
+          if (workerMode === 'agent') run(() => call.current('/api/v1/master/business/workers/from-agent', post({agent_id: f.agent_id, name: f.name || undefined, capacity: Number(f.capacity)})), (out) => setLinkedWorker(out));
+          else run(() => call.current('/api/v1/master/business/workers', post({name: f.name, capacity: Number(f.capacity)})), (out) => setIssuedToken(out)); }}>
+          <FormSection title="Tipo de worker"><label className="field"><span>Como o worker se identifica</span>
+            <select name="mode" value={workerMode} onChange={e => setWorkerMode(e.target.value)}>
+              <option value="agent">Dentro de um agente de monitoramento já instalado (recomendado, sem token)</option>
+              <option value="token">Serviço independente (token exibido uma única vez)</option></select></label></FormSection>
+          <FormSection title="Identificação">
+            {workerMode === 'agent' && <Select name="agent_id" label="Agente de monitoramento" rows={(aux.agents || []).filter(a => !a.worker_id)} textOf={a => `${a.name} (${a.status})`} required/>}
+            <Field name="name" label={workerMode === 'agent' ? 'Nome do worker (opcional, padrão: nome do agente)' : 'Nome do worker'} required={workerMode !== 'agent'} minLength="2" maxLength="120"/>
             <Field name="capacity" label="Consultas simultâneas (1 a 4)" type="number" min="1" max="4" defaultValue="1" required/></FormSection>
           <FormActions onCancel={() => navigate('workers')} submitting={busy} submitLabel="Criar worker"/>
         </form></FormPage>;
@@ -355,7 +370,7 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
         <button type="button" onClick={load} disabled={busy}>Atualizar</button></FilterBar>}>
       {alerts}
       <DataGrid stateKey={`business:${tenantId}:workers`} rows={filtered} columns={[{key: 'name', label: 'Worker'}, {key: 'status', label: 'Situação', render: r => badge(r.status)},
-        {key: 'version', label: 'Versão'}, {key: 'last_heartbeat_at', label: 'Último sinal', render: r => fmt(r.last_heartbeat_at)}, {key: 'capacity', label: 'Capacidade'},
+        {key: 'agent_name', label: 'Agente', render: r => r.agent_name || 'Independente'}, {key: 'version', label: 'Versão'}, {key: 'last_heartbeat_at', label: 'Último sinal', render: r => fmt(r.last_heartbeat_at)}, {key: 'capacity', label: 'Capacidade'},
         {key: 'active_jobs', label: 'Em execução'}, {key: 'queued_jobs', label: 'Na fila'}, {key: 'sources', label: 'Fontes'},
         {key: 'update_ring', label: 'Anel de atualização', render: r => ringLabel[r.update_ring] || '—'},
         {key: 'update_status', label: 'Última atualização', render: r => r.update_status ? `${updateLabel[r.update_status] || r.update_status} ${r.update_version || ''}` : '—'}]}

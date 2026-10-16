@@ -16,6 +16,12 @@
     <ProjectReference Include="..\Nexora.BusinessWorker\Nexora.BusinessWorker.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Codigo do agente testado sem referenciar o executavel do agente inteiro. -->
+    <Compile Include="..\Nexora.Agent\BusinessSupport.cs" />
+    <Compile Include="..\Nexora.Agent\AgentOptions.cs" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
     <None Update="TestVectors.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

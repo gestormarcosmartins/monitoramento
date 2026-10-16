@@ -67,15 +67,34 @@ def _master(identity: Identity, tenant_id: str) -> dict[str, Any]:
     return actor
 
 
-def worker_identity(x_tenant_id: str = Header(alias="X-Tenant-ID"), x_worker_id: str = Header(alias="X-Worker-ID"),
-                    x_worker_token: str = Header(alias="X-Worker-Token")) -> dict[str, Any]:
-    if not UUID_RE.fullmatch(x_tenant_id) or not UUID_RE.fullmatch(x_worker_id):
+def worker_credentials(worker_id: str | None, worker_token: str | None, agent_id: str | None, agent_token: str | None) -> tuple[str, str, str]:
+    """Exactly one credential kind per request: a worker token pair, or the identity of an enrolled monitoring agent."""
+    has_worker = bool(worker_id or worker_token)
+    has_agent = bool(agent_id or agent_token)
+    if has_worker and not has_agent and worker_id and worker_token:
+        return "worker", worker_id, worker_token
+    if has_agent and not has_worker and agent_id and agent_token:
+        return "agent", agent_id, agent_token
+    raise HTTPException(401, "Invalid worker credentials")
+
+
+def worker_identity(x_tenant_id: str = Header(alias="X-Tenant-ID"), x_worker_id: str | None = Header(default=None),
+                    x_worker_token: str | None = Header(default=None), x_agent_id: str | None = Header(default=None),
+                    x_agent_token: str | None = Header(default=None)) -> dict[str, Any]:
+    kind, ident, token = worker_credentials(x_worker_id, x_worker_token, x_agent_id, x_agent_token)
+    if not UUID_RE.fullmatch(x_tenant_id) or not UUID_RE.fullmatch(ident):
         raise HTTPException(401, "Invalid worker credentials")
     with tenant_connection(x_tenant_id) as db:
-        worker = db.execute("SELECT * FROM cm_business_workers WHERE tenant_id=%s AND id=%s", (x_tenant_id, x_worker_id)).fetchone()
+        if kind == "worker":
+            worker = db.execute("SELECT * FROM cm_business_workers WHERE tenant_id=%s AND id=%s", (x_tenant_id, ident)).fetchone()
+            valid = bool(worker and worker["token_hash"] and hmac.compare_digest(worker["token_hash"], _hash(token)))
+        else:
+            from .agent_api import _hash as agent_hash
+            agent = db.execute("SELECT status,token_hash FROM cm_agents WHERE tenant_id=%s AND id=%s", (x_tenant_id, ident)).fetchone()
+            worker = db.execute("SELECT * FROM cm_business_workers WHERE tenant_id=%s AND agent_id=%s", (x_tenant_id, ident)).fetchone() if agent else None
+            valid = bool(agent and worker and agent["status"] != "disabled" and hmac.compare_digest(agent["token_hash"], agent_hash(token)))
         enabled = _enabled(db, x_tenant_id) if worker else False
-    if (not worker or worker["status"] in ("REVOKED", "SUSPENDED")
-            or not hmac.compare_digest(worker["token_hash"], _hash(x_worker_token))):
+    if not valid or worker["status"] in ("REVOKED", "SUSPENDED"):
         raise HTTPException(401, "Invalid worker credentials")
     if not enabled:
         raise HTTPException(404, "Business Monitor disabled")
@@ -184,6 +203,12 @@ def list_sources(tenant_id: str = Depends(tenant_header), identity: Identity = D
             WHERE s.tenant_id=%s ORDER BY s.name""", (tenant_id,)).fetchall())
 
 
+class WorkerFromAgent(BaseModel):
+    agent_id: UUID
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    capacity: int = Field(default=1, ge=1, le=4)
+
+
 class WorkerUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     capacity: int = Field(ge=1, le=4)
@@ -204,6 +229,35 @@ class SourceActive(BaseModel):
 def source_change_cancels_work(current: dict[str, Any], payload: SourceUpdate) -> bool:
     """Queued work was addressed to the old worker/database, so it must not run against the new target."""
     return str(current["worker_id"]) != str(payload.worker_id) or current["database_ref"] != payload.database_ref
+
+
+@master_router.get("/agents")
+def eligible_agents(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)):
+    """Monitoring agents of this company that can carry a Business Worker (not disabled, without one yet)."""
+    _master(identity, tenant_id)
+    with tenant_connection(tenant_id) as db:
+        return list(db.execute("""SELECT a.id,a.name,a.status,a.version,a.last_seen_at,
+              (SELECT w.id FROM cm_business_workers w WHERE w.tenant_id=a.tenant_id AND w.agent_id=a.id AND w.status<>'REVOKED') AS worker_id
+            FROM cm_agents a WHERE a.tenant_id=%s AND a.status<>'disabled' ORDER BY a.name""", (tenant_id,)).fetchall())
+
+
+@master_router.post("/workers/from-agent", status_code=201)
+def create_worker_from_agent(payload: WorkerFromAgent, tenant_id: str = Depends(tenant_header),
+                             identity: Identity = Depends(current_identity)):
+    """The agent already holds credentials issued at its enrollment, so no worker token exists or is shown."""
+    actor = _master(identity, tenant_id)
+    try:
+        with tenant_connection(tenant_id) as db:
+            agent = db.execute("SELECT name,status FROM cm_agents WHERE tenant_id=%s AND id=%s", (tenant_id, payload.agent_id)).fetchone()
+            if not agent or agent["status"] == "disabled":
+                raise HTTPException(404, "Agent not found")
+            row = db.execute("""INSERT INTO cm_business_workers(tenant_id,name,token_hash,agent_id,capacity,created_by)
+                VALUES (%s,%s,NULL,%s,%s,%s) RETURNING id,name,status,capacity,agent_id,created_at""",
+                             (tenant_id, payload.name or agent["name"], payload.agent_id, payload.capacity, actor["id"])).fetchone()
+            _audit(db, tenant_id, actor["id"], "create", "business_worker", row["id"], {"agent_id": str(payload.agent_id)})
+    except UniqueViolation as error:
+        raise HTTPException(409, "This agent already has a Business Worker, or the name is taken") from error
+    return row
 
 
 @master_router.put("/workers/{worker_id}")
@@ -514,7 +568,8 @@ def list_workers(tenant_id: str = Depends(tenant_header), identity: Identity = D
               (SELECT count(*) FROM cm_business_executions e WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.id
                  AND e.state IN ('LEASED','RUNNING')) AS active_jobs,
               (SELECT count(*) FROM cm_business_executions e WHERE e.tenant_id=w.tenant_id AND e.worker_id=w.id
-                 AND e.state='PENDING') AS queued_jobs
+                 AND e.state='PENDING') AS queued_jobs,
+              w.agent_id,(SELECT a.name FROM cm_agents a WHERE a.tenant_id=w.tenant_id AND a.id=w.agent_id) AS agent_name
             FROM cm_business_workers w WHERE w.tenant_id=%s ORDER BY w.name""", (tenant_id,)).fetchall())
 
 
@@ -530,6 +585,17 @@ def heartbeat(payload: Heartbeat, worker: dict[str, Any] = Depends(worker_identi
         db.execute("UPDATE cm_business_workers SET status='ONLINE',version=%s,last_heartbeat_at=now() WHERE tenant_id=%s AND id=%s",
                    (payload.version, worker["tenant_id"], worker["id"]))
     return {"status": "ok"}
+
+
+@worker_router.get("/identity")
+def worker_self(worker: dict[str, Any] = Depends(worker_identity)):
+    """What an embedded worker needs after authenticating as its agent: its worker id and the signing key."""
+    try:
+        key = public_key_b64()
+    except RuntimeError as error:
+        raise HTTPException(503, "Query signing is not configured") from error
+    return {"worker_id": str(worker["id"]), "name": worker["name"], "capacity": worker["capacity"],
+            "algorithm": "Ed25519", "public_key": key}
 
 
 @worker_router.get("/signing-key")

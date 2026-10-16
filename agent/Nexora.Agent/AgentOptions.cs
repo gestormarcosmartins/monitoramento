@@ -27,6 +27,10 @@ public sealed class AgentOptions
     public bool SqlEncrypt { get; set; } = true;
     public bool SqlTrustServerCertificate { get; set; } = true;
     public int SqlCommandTimeoutSeconds { get; set; } = 30;
+    // Consultas de negócio (Business Worker embutido). Desligado por padrão: um agente que não usa isso não muda em nada.
+    public bool BusinessEnabled { get; set; } = false;
+    public BusinessSource[] BusinessSources { get; set; } = [];
+
     public string ChaveouConnectionString { get; set; } = "";
     public string ChaveouTenantPublicId { get; set; } = "";
     public int ChaveouOperationalSeconds { get; set; } = 60;
@@ -71,4 +75,16 @@ public sealed class AgentOptions
     public int BennerMemAvailableCritMb { get; set; } = 2048;
     public int BennerBlockWarnSeconds { get; set; } = 5;
     public int BennerBlockCritSeconds { get; set; } = 30;
+}
+
+/// <summary>Uma fonte de dados de negócio. A senha NÃO fica aqui: vai para o armazenamento protegido (DPAPI).</summary>
+public sealed class BusinessSource
+{
+    /// <summary>Nome lógico usado pela Central (minúsculas, números e _), por exemplo jri_hub.</summary>
+    public string Ref { get; set; } = "";
+    public string Dialect { get; set; } = "sqlserver";
+    public string Server { get; set; } = "";
+    public string Database { get; set; } = "";
+    public string User { get; set; } = "";
+    public bool TrustServerCertificate { get; set; } = false;
 }

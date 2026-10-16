@@ -14,6 +14,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Business Worker embutido: reaproveita o mesmo codigo do worker (assinatura, limites, execucao). -->
+    <ProjectReference Include="..\Nexora.BusinessWorker\Nexora.BusinessWorker.csproj" />
+  </ItemGroup>
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64'">
     <DefineConstants>$(DefineConstants);CHAVEOU_AGENT</DefineConstants>
   </PropertyGroup>

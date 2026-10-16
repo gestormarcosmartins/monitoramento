@@ -40,5 +40,7 @@ builder.Services.AddSingleton<LocalQueue>();
 #if CHAVEOU_AGENT
 builder.Services.AddSingleton<ChaveouMonitorCollector>();
 #endif
+builder.Services.AddSingleton<BusinessSecretStore>();
+builder.Services.AddHostedService<BusinessWorkerHost>();  // sai na hora se AgentOptions.BusinessEnabled for false
 builder.Services.AddHostedService<AgentWorker>();
 await builder.Build().RunAsync();

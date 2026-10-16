@@ -55,3 +55,11 @@ test("install guide never places the worker token inside the generated commands"
   assert.match(guide, /--token-file worker\.token/);
   assert.doesNotMatch(guide, /worker_token|issuedToken/);
 });
+
+test("a worker can be linked to an installed monitoring agent without any token", () => {
+  assert.match(source, /workers\/from-agent/);
+  assert.match(source, /business\/agents/);
+  assert.match(source, /Nenhum token foi gerado/);
+  const linked = source.slice(source.indexOf("Worker vinculado ao agente"), source.indexOf("return <FormPage title=\"Novo worker\""));
+  assert.doesNotMatch(linked, /worker_token|issuedToken/);
+});
