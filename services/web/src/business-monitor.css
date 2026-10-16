@@ -1,7 +1,10 @@
 .nexora-business {display:flex;flex-direction:column;gap:16px;min-width:0}
-.bm-tabs {display:flex;gap:8px;flex-wrap:wrap}
-.bm-tabs button {border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px 14px;color:#0b1f3b;cursor:pointer}
-.bm-tabs button.active {border-color:#2563ff;color:#2563ff;font-weight:700}
+/* Abas: o seletor leva .nexora-business para vencer as regras globais de "nav button" (menu lateral escuro) em nexora.css. */
+.nexora-business nav.bm-tabs {display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;overflow-x:auto;overflow-y:hidden;padding:0 0 6px;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.nexora-business nav.bm-tabs button {flex:0 0 auto;width:auto;display:inline-flex;align-items:center;min-height:44px;padding:10px 16px;white-space:nowrap;border:1px solid #cbd5e1;border-bottom:3px solid transparent;border-radius:8px;background:#fff;color:#0b1f3b;font-size:15px;font-weight:500;box-shadow:none;transform:none;cursor:pointer}
+.nexora-business nav.bm-tabs button:hover {background:#eff4ff;color:#0b1f3b;border-color:#94a3b8;transform:none}
+.nexora-business nav.bm-tabs button.active,.nexora-business nav.bm-tabs button[aria-current="page"] {background:#eaf1ff;color:#0b3a9e;border-color:#2563ff;border-bottom:3px solid #1d4ed8;font-weight:700;box-shadow:none}
+.nexora-business nav.bm-tabs button:focus-visible {outline:3px solid #1d4ed8;outline-offset:2px}
 .bm-context {color:#64748b;margin:10px 0}
 .bm-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
 .bm-card {display:flex;flex-direction:column;gap:10px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;min-width:0}
@@ -16,7 +19,7 @@
 .bm-status.critico {background:#fee2e2;color:#991b1b}
 .bm-status.sem_dados,.bm-status.suspenso {background:#e2e8f0;color:#334155}
 .bm-error {padding:12px;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;background:#fff1f2}
-@media(max-width:520px){.bm-tabs button {flex:1 1 100%;text-align:left}.bm-cards{grid-template-columns:1fr}}
+@media(max-width:520px){.bm-cards{grid-template-columns:1fr}}
 /* P1 admin and process views reuse official Nexora shared shells/components. */
 .bm-row-actions{display:flex;flex-wrap:wrap;gap:8px}
 .bm-row-actions button{min-height:36px}
