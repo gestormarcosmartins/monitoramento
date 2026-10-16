@@ -41,3 +41,17 @@ test("the Master governance shell does not expose business data pages without bu
   assert.match(shell, /MasterQuickGrant/);
   assert.match(shell, /grant administrator without 'business\.view'/);
 });
+
+test("workers and data sources can be edited, installed and inactivated on dedicated pages", () => {
+  for (const route of ["workers/${r.id}/editar", "workers/${r.id}/instalar", "fontes/${r.id}/editar", "fontes/${r.id}/situacao", "/install-info", "/active"]) {
+    assert.ok(source.includes(route), `route ${route}`);
+  }
+  assert.match(source, /Banco \(não editável\)/);
+});
+
+test("install guide never places the worker token inside the generated commands", () => {
+  const guide = source.slice(source.indexOf("function InstallGuide"), source.indexOf("export default function BusinessQueries"));
+  assert.match(guide, /Read-Host -AsSecureString/);
+  assert.match(guide, /--token-file worker\.token/);
+  assert.doesNotMatch(guide, /worker_token|issuedToken/);
+});

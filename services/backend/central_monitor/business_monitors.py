@@ -184,6 +184,102 @@ def list_sources(tenant_id: str = Depends(tenant_header), identity: Identity = D
             WHERE s.tenant_id=%s ORDER BY s.name""", (tenant_id,)).fetchall())
 
 
+class WorkerUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    capacity: int = Field(ge=1, le=4)
+
+
+class SourceUpdate(BaseModel):
+    """The dialect is not editable: queries were validated for it. Rename, move to another worker or change the logical database."""
+    name: str = Field(min_length=2, max_length=120)
+    worker_id: UUID
+    database_ref: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+
+
+class SourceActive(BaseModel):
+    active: bool
+    reason: str = Field(default="", max_length=500)
+
+
+def source_change_cancels_work(current: dict[str, Any], payload: SourceUpdate) -> bool:
+    """Queued work was addressed to the old worker/database, so it must not run against the new target."""
+    return str(current["worker_id"]) != str(payload.worker_id) or current["database_ref"] != payload.database_ref
+
+
+@master_router.put("/workers/{worker_id}")
+def update_worker(worker_id: UUID, payload: WorkerUpdate, tenant_id: str = Depends(tenant_header),
+                  identity: Identity = Depends(current_identity)):
+    actor = _master(identity, tenant_id)
+    try:
+        with tenant_connection(tenant_id) as db:
+            row = db.execute("""UPDATE cm_business_workers SET name=%s,capacity=%s WHERE tenant_id=%s AND id=%s AND status<>'REVOKED'
+                RETURNING id,name,capacity,status""", (payload.name, payload.capacity, tenant_id, worker_id)).fetchone()
+            if not row:
+                raise HTTPException(404, "Worker not found or revoked")
+            _audit(db, tenant_id, actor["id"], "update", "business_worker", worker_id, {"capacity": payload.capacity})
+    except UniqueViolation as error:
+        raise HTTPException(409, "A worker with this name already exists") from error
+    return row
+
+
+@master_router.put("/data-sources/{source_id}")
+def update_source(source_id: UUID, payload: SourceUpdate, tenant_id: str = Depends(tenant_header),
+                  identity: Identity = Depends(current_identity)):
+    actor = _master(identity, tenant_id)
+    try:
+        with tenant_connection(tenant_id) as db:
+            current = db.execute("SELECT worker_id,database_ref FROM cm_business_data_sources WHERE tenant_id=%s AND id=%s FOR UPDATE",
+                                 (tenant_id, source_id)).fetchone()
+            if not current:
+                raise HTTPException(404, "Data source not found")
+            if not db.execute("SELECT 1 FROM cm_business_workers WHERE tenant_id=%s AND id=%s AND status<>'REVOKED'",
+                              (tenant_id, payload.worker_id)).fetchone():
+                raise HTTPException(404, "Worker not found")
+            row = db.execute("""UPDATE cm_business_data_sources SET name=%s,worker_id=%s,database_ref=%s WHERE tenant_id=%s AND id=%s
+                RETURNING id,name,dialect,database_ref,worker_id,active""",
+                             (payload.name, payload.worker_id, payload.database_ref, tenant_id, source_id)).fetchone()
+            canceled = 0
+            if source_change_cancels_work(current, payload):
+                canceled = db.execute("""UPDATE cm_business_executions e SET state='CANCELED',finished_at=now(),error_code='source_changed'
+                    FROM cm_business_monitors m WHERE e.tenant_id=%s AND m.tenant_id=e.tenant_id AND m.id=e.monitor_id AND m.source_id=%s
+                      AND e.state IN ('PENDING','LEASED')""", (tenant_id, source_id)).rowcount
+            _audit(db, tenant_id, actor["id"], "update", "business_data_source", source_id, {"canceled_executions": canceled})
+    except UniqueViolation as error:
+        raise HTTPException(409, "A data source with this name already exists") from error
+    return row
+
+
+@master_router.post("/data-sources/{source_id}/active")
+def set_source_active(source_id: UUID, payload: SourceActive, tenant_id: str = Depends(tenant_header),
+                      identity: Identity = Depends(current_identity)):
+    """Inactive sources are skipped by the scheduler; queued work is canceled, running work finishes."""
+    actor = _master(identity, tenant_id)
+    with tenant_connection(tenant_id) as db:
+        row = db.execute("UPDATE cm_business_data_sources SET active=%s WHERE tenant_id=%s AND id=%s RETURNING id,active",
+                         (payload.active, tenant_id, source_id)).fetchone()
+        if not row:
+            raise HTTPException(404, "Data source not found")
+        if not payload.active:
+            db.execute("""UPDATE cm_business_executions e SET state='CANCELED',finished_at=now(),error_code='source_inactive'
+                FROM cm_business_monitors m WHERE e.tenant_id=%s AND m.tenant_id=e.tenant_id AND m.id=e.monitor_id AND m.source_id=%s
+                  AND e.state IN ('PENDING','LEASED')""", (tenant_id, source_id))
+        _audit(db, tenant_id, actor["id"], "activate" if payload.active else "deactivate", "business_data_source", source_id,
+               {"reason": payload.reason})
+    return row
+
+
+@master_router.get("/install-info")
+def install_info(tenant_id: str = Depends(tenant_header), identity: Identity = Depends(current_identity)):
+    """Public data the installer needs. The signing key is public by design (the worker pins it to verify manifests)."""
+    from .settings import get_settings
+    _master(identity, tenant_id)
+    try:
+        key = public_key_b64()
+    except RuntimeError:
+        key = None
+    return {"server_url": get_settings().central_public_url.rstrip("/"), "signing_public_key": key, "tenant_id": tenant_id}
+
+
 # ------------------------------------------------------------------ master: monitors and revisions
 class RevisionBody(BaseModel):
     query: str = Field(min_length=6, max_length=20000)
