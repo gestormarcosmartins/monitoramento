@@ -346,6 +346,8 @@ internal sealed class ConfigurationForm : Form
             if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(enrollmentToken))
                 throw new InvalidOperationException("Informe o token de ativação no primeiro cadastro deste computador.");
             Directory.CreateDirectory(InstallDirectory);
+            _status.Text = "Parando o agente em execução...";
+            await Task.Run(StopRunningAgent);  // o executável em uso trava a cópia e o processo antigo continuaria rodando
             StopAndDeleteService();
             File.Copy(sourceAgent, Path.Combine(InstallDirectory, "Nexora.Agent.exe"), true);
             // Microsoft.Data.SqlClient needs its native SNI library sitting next to the
@@ -384,6 +386,8 @@ internal sealed class ConfigurationForm : Form
             _bizPassword.Clear();
             InstallScheduledTask(Path.Combine(InstallDirectory, "Nexora.Agent.exe"));
             _token.Clear();
+            var running = await Task.Run(() => WaitAgentRunning(20));
+            if (!running) throw new InvalidOperationException("O agente foi instalado, mas não iniciou. Abra o Agendador de Tarefas, execute a tarefa NexoraAgent e veja o resultado.");
             _status.Text = "Agente instalado e iniciado. A comunicação ocorrerá no intervalo configurado.";
             MessageBox.Show(this, "Agente Nexora instalado e iniciado com sucesso.", "Nexora Agent", MessageBoxButtons.OK, MessageBoxIcon.Information);
             Close();  // a instalacao terminou: nao deixa a janela aberta
@@ -394,6 +398,42 @@ internal sealed class ConfigurationForm : Form
             MessageBox.Show(this, error.Message, "Não foi possível instalar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally { if (!IsDisposed) _install.Enabled = true; }
+    }
+
+    /// <summary>Encerra a tarefa agendada e qualquer Nexora.Agent.exe em execução; falha com mensagem clara se algum resistir.</summary>
+    private static void StopRunningAgent()
+    {
+        try
+        {
+            using var end = Process.Start(new ProcessStartInfo("schtasks.exe", $"/End /TN {ServiceName}") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true });
+            end?.WaitForExit(15000);
+        }
+        catch (Exception) { /* tarefa inexistente: primeira instalação */ }
+        foreach (var process in Process.GetProcessesByName("Nexora.Agent"))
+        {
+            using (process)
+            {
+                try { process.Kill(entireProcessTree: true); process.WaitForExit(15000); }
+                catch (Exception) when (process.HasExited) { /* já saiu */ }
+            }
+        }
+        Thread.Sleep(500);
+        if (Process.GetProcessesByName("Nexora.Agent").Length > 0)
+            throw new InvalidOperationException("Não foi possível parar o agente em execução. Encerre o processo Nexora.Agent no Gerenciador de Tarefas e tente de novo.");
+    }
+
+    private static bool WaitAgentRunning(int seconds)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            var found = Process.GetProcessesByName("Nexora.Agent");
+            var any = found.Length > 0;
+            foreach (var p in found) p.Dispose();
+            if (any) return true;
+            Thread.Sleep(1000);
+        }
+        return false;
     }
 
     private static void StopAndDeleteService()
