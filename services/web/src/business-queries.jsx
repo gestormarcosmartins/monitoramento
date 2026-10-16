@@ -29,6 +29,28 @@ const badge = (value) => <span className={`bm-status ${['ACTIVE', 'ONLINE', 'SUC
   : ['FAILED', 'TIMED_OUT', 'REJECTED', 'REVOKED'].includes(value) ? 'critico' : ['SUSPENDED', 'TESTED', 'EXPIRED', 'PENDING', 'RUNNING', 'LEASED'].includes(value) ? 'atencao' : 'sem_dados'}`}>{label(value)}</span>;
 
 
+/** Comandos de instalação já preenchidos. O token NUNCA entra nos comandos: o instalador o lê de forma protegida. */
+function InstallGuide({info, workerId, tenantId}) {
+  const server = info?.server_url || '';
+  const key = info?.signing_public_key;
+  const windows = `.\\install-business-worker.ps1 -ServerUrl "${server}" -TenantId "${tenantId}" -WorkerId "${workerId}" `
+    + `-Token (Read-Host -AsSecureString "Token do worker") -SigningPublicKey "${key || '<CHAVE-PUBLICA>'}" `
+    + `-DatabaseRef <nome_logico_do_banco> -ConnectionString "<string de conexão somente leitura>"`;
+  const linux = `./install-business-worker.sh --server-url "${server}" --tenant-id "${tenantId}" --worker-id "${workerId}" `
+    + `--signing-key "${key || '<CHAVE-PUBLICA>'}" --token-file worker.token --database-ref <nome_logico_do_banco> --connection-file conexao.txt`;
+  const area = (id, text, rows) => <textarea id={id} readOnly rows={rows} value={text} onFocus={e => e.target.select()} style={{width: '100%', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13}}/>;
+  return <section className="form-section">
+    <h3>Instalação do Business Worker</h3>
+    {!key && <p role="alert" className="bm-error">A chave pública de assinatura não está configurada no servidor (BUSINESS_SIGNING_KEY). Configure antes de instalar o worker.</p>}
+    <p className="bm-context">Rode na máquina do cliente que enxerga o banco. A conexão com o banco fica somente nessa máquina, com usuário de leitura.
+      Confirme a chave abaixo com quem administra o servidor antes de instalar.</p>
+    <label className="field" htmlFor="bm-key"><span>Chave pública de assinatura</span>{area('bm-key', key || 'Não configurada', 2)}</label>
+    <label className="field" htmlFor="bm-win"><span>Windows (PowerShell como Administrador)</span>{area('bm-win', windows, 4)}</label>
+    <label className="field" htmlFor="bm-linux"><span>Linux (root)</span>{area('bm-linux', linux, 4)}</label>
+    <p className="bm-context">No Linux, grave o token em <code>worker.token</code> e a conexão em <code>conexao.txt</code> com permissão restrita. O token não aparece nos comandos.</p>
+  </section>;
+}
+
 export default function BusinessQueries({page, tenantId, request, access, isMaster, ui, navigate}) {
   const {ListPage, MetricGroup, FilterBar, DataGrid, FormPage, FormSection, FormActions} = ui;
   const call = useRef(request); call.current = request;
@@ -71,10 +93,13 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
             data.sources = await call.current('/api/v1/master/business/data-sources');
           }
         } else data.items = canView ? await call.current('/api/v1/business/monitors') : [];
-      } else if (page === 'workers') data.items = await call.current('/api/v1/master/business/workers');
+      } else if (page === 'workers') {
+        data.items = await call.current('/api/v1/master/business/workers');
+        if (segments[0] === 'novo' || sub === 'instalar') data.install = await call.current('/api/v1/master/business/install-info');
+      }
       else if (page === 'fontes') {
         data.items = await call.current('/api/v1/master/business/data-sources');
-        if (segments[0] === 'novo') data.workers = (await call.current('/api/v1/master/business/workers')).filter(w => w.status !== 'REVOKED');
+        if (segments[0] === 'novo' || sub === 'editar') data.workers = (await call.current('/api/v1/master/business/workers')).filter(w => w.status !== 'REVOKED');
       } else if (page === 'atualizacoes') {
         data.items = await call.current('/api/v1/master/business/releases');
       } else if (page === 'filas') {
@@ -267,7 +292,8 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
           <Field name="id" label="Identificador do worker" defaultValue={issuedToken.id} readOnly onFocus={e => e.target.select()}/>
           <Field name="token" label="Token do worker (exibido uma única vez)" defaultValue={issuedToken.worker_token} readOnly onFocus={e => e.target.select()}/>
           <Field name="tenant" label="Identificador da Empresa" defaultValue={tenantId} readOnly onFocus={e => e.target.select()}/></div>
-          <p className="bm-context">Instale o Business Worker na máquina do cliente com estes três valores e a chave pública de assinatura (ver o guia de instalação). Guarde o token em arquivo protegido; não o envie por e-mail ou chat.</p></section>
+          <p className="bm-context">Guarde o token em arquivo protegido; não o envie por e-mail ou chat.</p></section>
+        <InstallGuide info={aux.install} workerId={issuedToken.id} tenantId={tenantId}/>
         <div className="form-actions"><button type="button" className="primary" onClick={() => { setIssuedToken(null); navigate('workers'); }}>Concluir</button></div>
       </FormPage>;
       return <FormPage title="Novo worker" description="Cada worker tem identidade, token e fila próprios e executa somente as fontes ligadas a ele." onBack={() => navigate('workers')}>
@@ -277,6 +303,26 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
           <FormSection title="Identificação"><Field name="name" label="Nome do worker" required minLength="2" maxLength="120"/>
             <Field name="capacity" label="Consultas simultâneas (1 a 4)" type="number" min="1" max="4" defaultValue="1" required/></FormSection>
           <FormActions onCancel={() => navigate('workers')} submitting={busy} submitLabel="Criar worker"/>
+        </form></FormPage>;
+    }
+    if (segments[0] && sub === 'instalar') {
+      const worker = items.find(w => w.id === segments[0]);
+      return <FormPage title={`Instalar worker${worker ? ` — ${worker.name}` : ''}`} description="Comandos prontos para a máquina do cliente. O token só é exibido na criação; se perdeu, revogue e crie outro worker." onBack={() => navigate('workers')}>
+        {alerts}
+        <InstallGuide info={aux.install} workerId={segments[0]} tenantId={tenantId}/>
+        <div className="form-actions"><button type="button" className="primary" onClick={() => navigate('workers')}>Voltar</button></div>
+      </FormPage>;
+    }
+    if (segments[0] && sub === 'editar') {
+      const worker = items.find(w => w.id === segments[0]);
+      if (!worker) return <section className="panel">{alerts}</section>;
+      return <FormPage title={`Editar worker — ${worker.name}`} description="Nome e número de consultas simultâneas. O token e a identidade não mudam." onBack={() => navigate('workers')}>
+        {alerts}
+        <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+          run(() => call.current(`/api/v1/master/business/workers/${segments[0]}`, {method: 'PUT', body: JSON.stringify({name: f.name, capacity: Number(f.capacity)})}), () => navigate('workers')); }}>
+          <FormSection title="Identificação"><Field name="name" label="Nome do worker" defaultValue={worker.name} required minLength="2" maxLength="120"/>
+            <Field name="capacity" label="Consultas simultâneas (1 a 4)" type="number" min="1" max="4" defaultValue={worker.capacity} required/></FormSection>
+          <FormActions onCancel={() => navigate('workers')} submitting={busy} submitLabel="Salvar worker"/>
         </form></FormPage>;
     }
     if (segments[0] && sub === 'anel') {
@@ -314,6 +360,8 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
         {key: 'update_ring', label: 'Anel de atualização', render: r => ringLabel[r.update_ring] || '—'},
         {key: 'update_status', label: 'Última atualização', render: r => r.update_status ? `${updateLabel[r.update_status] || r.update_status} ${r.update_version || ''}` : '—'}]}
         actions={(r) => r.status !== 'REVOKED' ? <>
+          <button type="button" onClick={() => navigate(`workers/${r.id}/editar`)}>Editar</button>
+          <button type="button" onClick={() => navigate(`workers/${r.id}/instalar`)}>Instalar</button>
           <button type="button" onClick={() => navigate(`workers/${r.id}/anel`)}>Editar anel</button>
           <button type="button" onClick={() => navigate(`workers/${r.id}/revogar`)}>Revogar</button></> : null}/>
     </ListPage>;
@@ -322,6 +370,33 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
   // ------------------------------------------------------------------ Fontes
   if (page === 'fontes') {
     if (!isMaster) return <section className="panel"><h2>Acesso não autorizado</h2><p>As fontes de dados são administradas pelo Master técnico.</p></section>;
+    if (segments[0] && sub === 'editar') {
+      const source = items.find(x => x.id === segments[0]);
+      if (!source) return <section className="panel">{alerts}</section>;
+      return <FormPage title={`Editar fonte — ${source.name}`} description="Mudar o worker ou o nome lógico do banco cancela as consultas que ainda estão na fila desta fonte. O tipo de banco não muda: as consultas foram validadas para ele." onBack={() => navigate('fontes')}>
+        {alerts}
+        <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget).entries());
+          run(() => call.current(`/api/v1/master/business/data-sources/${segments[0]}`, {method: 'PUT', body: JSON.stringify({name: f.name, worker_id: f.worker_id, database_ref: f.database_ref})}), () => navigate('fontes')); }}>
+          <FormSection title="Fonte"><Field name="name" label="Nome da fonte" defaultValue={source.name} required minLength="2" maxLength="120"/>
+            <Select name="worker_id" label="Worker que executa" rows={aux.workers || []} value={source.worker_id} required/>
+            <Field name="dialect" label="Banco (não editável)" defaultValue={source.dialect === 'sqlserver' ? 'SQL Server' : 'PostgreSQL'} readOnly/>
+            <Field name="database_ref" label="Nome lógico do banco (minúsculas, números e _)" defaultValue={source.database_ref} required pattern="[a-z][a-z0-9_]{1,63}" title="Comece com letra minúscula; use letras minúsculas, números e _"/></FormSection>
+          <FormActions onCancel={() => navigate('fontes')} submitting={busy} submitLabel="Salvar fonte"/>
+        </form></FormPage>;
+    }
+    if (segments[0] && sub === 'situacao') {
+      const source = items.find(x => x.id === segments[0]);
+      if (!source) return <section className="panel">{alerts}</section>;
+      const next = !source.active;
+      return <FormPage title={`${next ? 'Reativar' : 'Inativar'} fonte — ${source.name}`} description={next ? 'As consultas desta fonte voltam a ser agendadas.' : 'As consultas desta fonte deixam de ser agendadas e as que estão na fila são canceladas. As que já estão rodando terminam.'} onBack={() => navigate('fontes')}>
+        {alerts}
+        <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const reason = new FormData(e.currentTarget).get('reason') || '';
+          run(() => call.current(`/api/v1/master/business/data-sources/${segments[0]}/active`, post({active: next, reason})), () => navigate('fontes')); }}>
+          <FormSection title="Confirmação"><p>Confirme a mudança de situação de <strong>{source.name}</strong>. A ação fica em auditoria.</p>
+            <Field name="reason" label="Motivo (opcional)" maxLength="500"/></FormSection>
+          <FormActions onCancel={() => navigate('fontes')} submitting={busy} submitLabel={next ? 'Reativar fonte' : 'Inativar fonte'}/>
+        </form></FormPage>;
+    }
     if (segments[0] === 'novo') return <FormPage title="Nova fonte de dados" description="Só o nome lógico do banco é guardado aqui. Usuário, senha e servidor ficam no worker, no cliente." onBack={() => navigate('fontes')}>
       {alerts}
       <form className="nexora-form" onSubmit={(e) => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.currentTarget).entries());
@@ -338,7 +413,10 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       filters={<FilterBar><label>Pesquisar <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Nome ou banco"/></label><button type="button" onClick={load} disabled={busy}>Atualizar</button></FilterBar>}>
       {alerts}
       <DataGrid stateKey={`business:${tenantId}:fontes`} rows={filtered} columns={[{key: 'name', label: 'Fonte'}, {key: 'dialect', label: 'Banco'}, {key: 'database_ref', label: 'Nome lógico'},
-        {key: 'worker_name', label: 'Worker', render: r => <>{r.worker_name} {badge(r.worker_status)}</>}, {key: 'active', label: 'Ativa', render: r => r.active ? 'Sim' : 'Não'}]}/>
+        {key: 'worker_name', label: 'Worker', render: r => <>{r.worker_name} {badge(r.worker_status)}</>}, {key: 'active', label: 'Ativa', render: r => r.active ? 'Sim' : 'Não'}]}
+        actions={(r) => <>
+          <button type="button" onClick={() => navigate(`fontes/${r.id}/editar`)}>Editar</button>
+          <button type="button" onClick={() => navigate(`fontes/${r.id}/situacao`)}>{r.active ? 'Inativar' : 'Reativar'}</button></>}/>
     </ListPage>;
   }
 
