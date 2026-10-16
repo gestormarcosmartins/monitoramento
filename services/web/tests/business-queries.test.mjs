@@ -63,3 +63,7 @@ test("a worker can be linked to an installed monitoring agent without any token"
   const linked = source.slice(source.indexOf("Worker vinculado ao agente"), source.indexOf("return <FormPage title=\"Novo worker\""));
   assert.doesNotMatch(linked, /worker_token|issuedToken/);
 });
+
+test("the metric column typed in the form is trimmed before it reaches the API", () => {
+  assert.match(source, /column: String\(f\.metric_column \|\| ''\)\.trim\(\)/);
+});
