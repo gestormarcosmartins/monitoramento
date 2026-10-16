@@ -12,6 +12,7 @@
   .\install-business-worker.ps1 -ServerUrl https://monitoramento.suaempresa.com -TenantId <guid> -WorkerId <guid> `
       -Token (Read-Host -AsSecureString "Worker token") -SigningPublicKey <key> `
       -DatabaseRef erp_principal -ConnectionString "Server=sql01;Database=ERP;User Id=nexora_ro;Password=...;"
+  Add -AllowUntrustedServerCertificate only when the database is on this same machine with a self-signed certificate.
 
   The signing key is shown by GET /api/v1/agents/business/signing-key (call it once with the worker headers and
   compare it with what the Master sees). Without -SigningPublicKey the installer refuses to continue.
@@ -24,6 +25,7 @@ param(
   [Parameter(Mandatory)][string]$SigningPublicKey,
   [string]$DatabaseRef,
   [string]$ConnectionString,
+  [switch]$AllowUntrustedServerCertificate,
   [string]$SourceDirectory = (Join-Path $PSScriptRoot "dist\business-worker\win-x64"),
   [string]$InstallDirectory = "$env:ProgramFiles\Nexora\BusinessWorker",
   [string]$DataDirectory = "$env:ProgramData\Nexora\BusinessWorker"
@@ -56,11 +58,12 @@ if ($DatabaseRef) {
   Set-Content -LiteralPath (Join-Path $secrets "$DatabaseRef.conn") -Value $ConnectionString -NoNewline -Encoding utf8
 }
 
+if ($AllowUntrustedServerCertificate) { Write-Warning "AllowUntrustedServerCertificate ligado: a conexão continua criptografada, mas o certificado do banco não é validado. Use só quando o banco está nesta mesma máquina (certificado autoassinado do SQL Server)." }
 $settings = @{
   Nexora = @{
     ServerUrl = $ServerUrl.TrimEnd('/'); TenantId = $TenantId; WorkerId = $WorkerId; SigningPublicKey = $SigningPublicKey
     TokenFile = (Join-Path $secrets "worker.token"); SecretsDirectory = $secrets
-    PollSeconds = 30; HeartbeatSeconds = 30; AllowUntrustedServerCertificate = $false; AssumeUtcForUnspecified = $true
+    PollSeconds = 30; HeartbeatSeconds = 30; AllowUntrustedServerCertificate = [bool]$AllowUntrustedServerCertificate; AssumeUtcForUnspecified = $true
     UpdateCheckMinutes = 10; UpdateDirectory = $updates
   }
   Logging = @{ LogLevel = @{ Default = "Information"; Microsoft = "Warning" } }
