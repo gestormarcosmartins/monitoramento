@@ -36,6 +36,8 @@ $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw "Run this script as Administrator." }
 if ($ServerUrl -notmatch '^https://') { throw "ServerUrl must be https." }
 if ([string]::IsNullOrWhiteSpace($SigningPublicKey)) { throw "SigningPublicKey is required (pin it at install time)." }
+$plain = [System.Net.NetworkCredential]::new("", $Token).Password
+if ([string]::IsNullOrWhiteSpace($plain) -or $plain.Length -lt 20) { throw "O token do worker veio vazio ou curto demais. Rode de novo e, no prompt Token do worker, cole o token (nada aparece na tela) e pressione Enter." }
 $exe = Join-Path $SourceDirectory "Nexora.BusinessWorker.exe"
 if (-not (Test-Path -LiteralPath $exe)) { throw "Worker binary not found in $SourceDirectory. Run build-business-worker.ps1 first." }
 
