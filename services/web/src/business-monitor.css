@@ -45,3 +45,12 @@
 .bm-checklist { margin: 12px 0; padding-left: 20px; display: grid; gap: 6px; }
 .bm-checklist .done { color: #166534; }
 .bm-checklist .todo { color: #92400e; }
+
+/* Feedback do teste de consulta: visível, com cor e texto (nunca só cor) */
+.bm-test-banner { display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 12px 16px; border-radius: 8px; border: 1px solid; font-size: 15px; line-height: 1.4; }
+.bm-test-info { background: #EFF6FF; border-color: #93C5FD; color: #1E3A8A; }
+.bm-test-success { background: #F0FDF4; border-color: #86EFAC; color: #14532D; }
+.bm-test-error { background: #FEF2F2; border-color: #FCA5A5; color: #7F1D1D; }
+.bm-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #93C5FD; border-top-color: #1D4ED8; animation: bm-spin 0.9s linear infinite; flex: none; }
+@keyframes bm-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bm-spinner { animation: none; } }

@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {COLUMN_TYPES, columnsText, parseColumns, parseParameters} from './business-queries-lib.js';
+import {COLUMN_TYPES, columnsText, parseColumns, parseParameters, testMessage} from './business-queries-lib.js';
 
 /** Query monitors (Business Monitor v1.0): Master governance (queries, workers, sources, queues) and, for people with
  *  `business.view`, execution history and results. Every operation is authorized by the backend; this file only decides
@@ -239,17 +239,16 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
           {detail.status === 'ACTIVE' && <button type="button" onClick={() => navigate(`consultas/${segments[0]}/situacao/suspend`)}>Suspender</button>}
           {['SUSPENDED', 'DISABLED'].includes(detail.status) && detail.published_revision && <button type="button" onClick={() => navigate(`consultas/${segments[0]}/situacao/resume`)}>Retomar</button>}
           {detail.status !== 'DISABLED' && <button type="button" onClick={() => navigate(`consultas/${segments[0]}/situacao/disable`)}>Desativar</button>}</div>}
+        {testState && (() => { const m = testMessage(testState); return <div ref={el => el && el.scrollIntoView({block: 'nearest', behavior: 'smooth'})} role={m.tone === 'error' ? 'alert' : 'status'} aria-live="polite" className={`bm-test-banner bm-test-${m.tone}`}>
+          {m.tone === 'info' && <span className="bm-spinner" aria-hidden="true"/>}<strong>{m.tone === 'success' ? '✔ ' : m.tone === 'error' ? '✖ ' : ''}{m.text}</strong></div>; })()}
         <h3>Revisões</h3>
-        {testState && <p role="status" className="info-banner">Teste da revisão {testState.revision}: {label(testState.state)}{testState.slow ? ' — ainda aguardando o Worker; atualize em instantes.' : ''}
-          {testState.row_count !== undefined && testState.state === 'SUCCEEDED' ? ` · ${testState.row_count} linha(s) em ${testState.duration_ms} ms` : ''}
-          {testState.error_code ? ` · ${testState.error_code}` : ''}</p>}
         <DataGrid stateKey={`business:${tenantId}:revisions:${segments[0]}`} rows={detail.revisions.map(r => ({...r, id: r.revision}))}
           columns={[{key: 'revision', label: 'Revisão', render: r => `v${r.revision}`}, {key: 'state', label: 'Estado', render: r => badge(r.state)},
             {key: 'created_at', label: 'Criada', render: r => fmt(r.created_at)}, {key: 'test_state', label: 'Último teste', render: r => r.test_state ? <>{badge(r.test_state)} {r.test_error_code || ''}</> : '—'},
             {key: 'published_at', label: 'Publicada em', render: r => fmt(r.published_at)}]}
           actions={isMaster ? (r) => <>
-            {['DRAFT', 'TESTED'].includes(r.state) && <button type="button" disabled={busy} onClick={() => testRevision(r.revision)}>Testar</button>}
-            {r.state === 'TESTED' && <button type="button" disabled={busy} onClick={() => publish(r.revision)}>Publicar</button>}</> : undefined}/>
+            {['DRAFT', 'TESTED'].includes(r.state) && <button type="button" disabled={busy || (testState && testState.revision === r.revision && ['PENDING', 'LEASED', 'RUNNING'].includes(testState.state))} onClick={() => testRevision(r.revision)}>{testState && testState.revision === r.revision && ['PENDING', 'LEASED', 'RUNNING'].includes(testState.state) ? 'Testando…' : 'Testar'}</button>}
+            {r.state === 'TESTED' && <button type="button" className="primary" disabled={busy} onClick={() => publish(r.revision)}>Publicar</button>}</> : undefined}/>
         <h3>Consulta da revisão v{latest.revision}</h3>
         <pre className="bm-sql" tabIndex="0" aria-label="Texto normalizado da consulta">{latest.query_text}</pre>
         <p className="bm-context">Parâmetros: <code>{JSON.stringify(latest.parameters)}</code> · Colunas: {columnsText(latest.column_schema).replaceAll('\n', ', ')} · Cálculo: {latest.metric.kind}{latest.metric.column ? ` (${latest.metric.column})` : ''}</p>
