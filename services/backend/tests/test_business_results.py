@@ -134,3 +134,18 @@ class Signing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetricColumnWhitespaceTests(unittest.TestCase):
+    def test_metric_column_ignores_surrounding_whitespace(self):
+        from central_monitor.business_results import validate_metric
+        columns = [{"name": "total_vencido_90", "type": "decimal"}]
+        self.assertEqual(validate_metric({"kind": "first_value", "column": " total_vencido_90 "}, columns),
+                         {"kind": "first_value", "column": "total_vencido_90"})
+
+    def test_unknown_metric_column_error_lists_the_declared_columns(self):
+        from central_monitor.business_results import ContractError, validate_metric
+        columns = [{"name": "total_vencido_90", "type": "decimal"}]
+        with self.assertRaises(ContractError) as caught:
+            validate_metric({"kind": "sum", "column": "outra"}, columns)
+        self.assertIn("total_vencido_90", str(caught.exception))

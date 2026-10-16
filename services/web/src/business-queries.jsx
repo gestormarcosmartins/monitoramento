@@ -149,7 +149,7 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
         const f = Object.fromEntries(new FormData(event.currentTarget).entries());
         const columns = parseColumns(f.columns), parameters = parseParameters(f.parameters);
         if (columns.error || parameters.error) { setError(columns.error || parameters.error); return; }
-        const metric = f.metric_kind === 'row_count' ? {kind: 'row_count'} : {kind: f.metric_kind, column: f.metric_column};
+        const metric = f.metric_kind === 'row_count' ? {kind: 'row_count'} : {kind: f.metric_kind, column: String(f.metric_column || '').trim()};
         const limits = {}; for (const key of ['timeout_seconds', 'max_rows', 'max_bytes']) if (f[key]) limits[key] = Number(f[key]);
         const body = {query: f.query, parameters: parameters.parameters, columns: columns.columns, metric, ...(Object.keys(limits).length ? {limits} : {})};
         run(() => revising ? call.current(`/api/v1/master/business/monitors/${segments[0]}/revisions`, post(body))

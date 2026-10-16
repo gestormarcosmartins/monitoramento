@@ -93,3 +93,7 @@ test("the Testar button shows progress and the result banner is announced to ass
   assert.match(source, /aria-live="polite"/);
   assert.match(source, /bm-test-banner/);
 });
+
+test("the metric column typed in the form is trimmed before it reaches the API", () => {
+  assert.match(source, /column: String\(f\.metric_column \|\| ''\)\.trim\(\)/);
+});
