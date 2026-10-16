@@ -155,7 +155,7 @@ internal sealed class ConfigurationForm : Form
         _install.MinimumSize = new Size(140, 38);
         _test.MinimumSize = new Size(125, 38);
         _test.Click += async (_, _) => await TestConnectionAsync();
-        _install.Click += (_, _) => Install();
+        _install.Click += async (_, _) => await InstallAsync();
         actions.Controls.Add(_install);
         actions.Controls.Add(_test);
         _status.Anchor = AnchorStyles.Left;
@@ -326,13 +326,18 @@ internal sealed class ConfigurationForm : Form
         finally { _test.Enabled = true; }
     }
 
-    private void Install()
+    private async Task InstallAsync()
     {
+        _install.Enabled = false;
         try
         {
             var server = ValidServer();
             var businessSource = BusinessSourceFromForm();
-            if (businessSource is not null) ValidateBusinessAsync(businessSource).GetAwaiter().GetResult();  // recusa sysadmin e conexao invalida antes de instalar
+            if (businessSource is not null)
+            {
+                _status.Text = "Validando a fonte de negócio...";
+                await ValidateBusinessAsync(businessSource);  // recusa sysadmin e conexão inválida antes de instalar (await: sem bloquear a janela)
+            }
             var sourceAgent = Path.Combine(AppContext.BaseDirectory, "Nexora.Agent.exe");
             if (!File.Exists(sourceAgent)) throw new FileNotFoundException("Nexora.Agent.exe não foi encontrado ao lado do configurador.");
             var credentialsPath = Path.Combine(
@@ -388,6 +393,7 @@ internal sealed class ConfigurationForm : Form
             _status.Text = $"Falha na instalação: {error.Message}";
             MessageBox.Show(this, error.Message, "Não foi possível instalar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+        finally { if (!IsDisposed) _install.Enabled = true; }
     }
 
     private static void StopAndDeleteService()
