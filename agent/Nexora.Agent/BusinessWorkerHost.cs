@@ -32,21 +32,23 @@ public sealed class BusinessWorkerHost : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
-        if (!_options.BusinessEnabled) return;
+        if (!_options.BusinessEnabled) { BusinessLog.Write("Consultas de negócio desligadas neste agente (BusinessEnabled=false)."); return; }
         _logger.LogInformation("Consultas de negócio habilitadas neste agente.");
+        BusinessLog.Write($"Consultas de negócio habilitadas; {_options.BusinessSources.Length} fonte(s) configurada(s).");
         while (!stop.IsCancellationRequested)
         {
             try
             {
-                if (_central.Credentials is null) { await Task.Delay(TimeSpan.FromSeconds(15), stop); continue; }
+                if (_central.Credentials is null) { BusinessLog.Write("Aguardando o cadastro do agente na Central."); await Task.Delay(TimeSpan.FromSeconds(15), stop); continue; }
                 var identity = await FetchIdentityAsync(stop);
-                if (identity is null) { await Task.Delay(NotReadyRetry, stop); continue; }
+                if (identity is null) { BusinessLog.Write("A Central ainda não tem um worker deste agente (Negócios > Workers). Nova tentativa em 5 minutos."); await Task.Delay(NotReadyRetry, stop); continue; }
                 await RunAsync(identity, stop);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 _logger.LogWarning("Consultas de negócio: falha ({Error}); nova tentativa em {Seconds}s.", ex.GetType().Name, (int)FailureRetry.TotalSeconds);
+                BusinessLog.Write($"Falha: {ex.GetType().Name}: {ex.Message}. Nova tentativa em {(int)FailureRetry.TotalSeconds}s.");
                 try { await Task.Delay(FailureRetry, stop); } catch (OperationCanceledException) { break; }
             }
         }
@@ -63,6 +65,7 @@ public sealed class BusinessWorkerHost : BackgroundService
         request.Headers.Add("X-Agent-ID", credentials.AgentId);
         request.Headers.Add("X-Agent-Token", credentials.AgentToken);
         using var response = await http.SendAsync(request, stop);
+        BusinessLog.Write($"Identidade do worker na Central: HTTP {(int)response.StatusCode}.");
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.NotFound)
         {
             _logger.LogInformation("Este agente ainda não tem um Business Worker habilitado na Central (Negócios > Workers).");
@@ -93,6 +96,7 @@ public sealed class BusinessWorkerHost : BackgroundService
         var heartbeat = new HeartbeatService(api, options, _logs.CreateLogger<HeartbeatService>());
         var polling = new JobPollingService(api, runner, options, _logs.CreateLogger<JobPollingService>());
         _logger.LogInformation("Business Worker embutido em execução (worker {WorkerId}, {Count} fonte(s)).", identity.WorkerId, connections.Count);
+        BusinessLog.Write($"Business Worker embutido em execução (worker {identity.WorkerId}, {connections.Count} fonte(s)).");
         await heartbeat.StartAsync(stop);
         await polling.StartAsync(stop);
         try

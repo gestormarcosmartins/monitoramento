@@ -90,6 +90,13 @@ public class AgentEmbeddingTests
     }
 
     [Fact]
+    public void Business_log_goes_to_the_agent_logs_folder_and_never_throws()
+    {
+        Assert.EndsWith(Path.Combine("Nexora", "Agent", "logs", "business.log"), BusinessLog.FilePath);
+        BusinessLog.Write("teste");  // pode gravar ou nao (permissao), mas nunca lanca excecao
+    }
+
+    [Fact]
     public void Business_is_off_by_default_so_existing_agents_are_unchanged()
     {
         var options = new AgentOptions();

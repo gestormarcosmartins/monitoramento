@@ -34,6 +34,28 @@ public sealed class BusinessSecretStore
     }
 }
 
+/// <summary>Log em arquivo do Business Worker embutido: so estados e codigos de erro, nunca SQL, valores, senha ou token.</summary>
+public static class BusinessLog
+{
+    private static readonly object Gate = new();
+    public static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexora", "Agent", "logs", "business.log");
+
+    public static void Write(string message)
+    {
+        try
+        {
+            lock (Gate)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+                var info = new FileInfo(FilePath);
+                if (info.Exists && info.Length > 1_000_000) File.Move(FilePath, FilePath + ".1", true);  // mantem no maximo 2 arquivos
+                File.AppendAllText(FilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            }
+        }
+        catch (Exception) { /* log nunca pode derrubar o agente */ }
+    }
+}
+
 public static class BusinessConnection
 {
     /// <summary>Monta a string de conexão. Aspas e ponto e vírgula nos campos são recusados para não injetar parâmetros.</summary>

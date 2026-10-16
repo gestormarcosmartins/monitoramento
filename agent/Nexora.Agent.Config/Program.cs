@@ -381,6 +381,7 @@ internal sealed class ConfigurationForm : Form
             _token.Clear();
             _status.Text = "Agente instalado e iniciado. A comunicação ocorrerá no intervalo configurado.";
             MessageBox.Show(this, "Agente Nexora instalado e iniciado com sucesso.", "Nexora Agent", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Close();  // a instalacao terminou: nao deixa a janela aberta
         }
         catch (Exception error)
         {
