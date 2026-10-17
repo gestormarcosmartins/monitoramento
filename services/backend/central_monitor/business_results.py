@@ -73,12 +73,13 @@ def validate_metric(metric: Any, columns: list[dict[str, str]]) -> dict[str, str
     if set(metric) != {"kind", "column"}:
         raise ContractError("This metric needs a column")
     by_name = {c["name"]: c["type"] for c in columns}
-    kind_of_column = by_name.get(metric["column"])
+    column = metric["column"].strip() if isinstance(metric["column"], str) else metric["column"]  # espacos de copiar/colar nao contam
+    kind_of_column = by_name.get(column)
     if kind_of_column is None:
-        raise ContractError("Metric column is not in the schema")
+        raise ContractError(f"Metric column is not in the schema (columns: {', '.join(by_name)})")
     if kind != "count_nonnull" and kind_of_column not in NUMERIC_TYPES:
         raise ContractError("Metric needs a numeric column")
-    return {"kind": kind, "column": metric["column"]}
+    return {"kind": kind, "column": column}
 
 
 def _decimal(value: Any) -> Decimal:

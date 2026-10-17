@@ -63,3 +63,48 @@ test("a worker can be linked to an installed monitoring agent without any token"
   const linked = source.slice(source.indexOf("Worker vinculado ao agente"), source.indexOf("return <FormPage title=\"Novo worker\""));
   assert.doesNotMatch(linked, /worker_token|issuedToken/);
 });
+
+import {testMessage, ERROR_HELP} from "../src/business-queries-lib.js";
+
+test("test feedback is explicit for waiting, success and failure", () => {
+  assert.equal(testMessage(null), null);
+  const waiting = testMessage({revision: 1, state: "PENDING"});
+  assert.equal(waiting.tone, "info");
+  assert.match(waiting.text, /enviado ao Worker/);
+  assert.match(testMessage({revision: 1, state: "PENDING", slow: true}).text, /Online/);
+  const ok = testMessage({revision: 2, state: "SUCCEEDED", row_count: 1, duration_ms: 120});
+  assert.equal(ok.tone, "success");
+  assert.match(ok.text, /1 linha\(s\) em 120 ms.*publicar/);
+  const bad = testMessage({revision: 1, state: "REJECTED", error_code: "database_ref_not_configured"});
+  assert.equal(bad.tone, "error");
+  assert.match(bad.text, /database_ref_not_configured/);
+  assert.match(bad.text, /nome lógico/);
+  assert.match(testMessage({revision: 1, state: "FAILED", error_code: "algo_novo"}).text, /business\.log/);
+});
+
+test("every worker error code has a human explanation", () => {
+  for (const code of ["database_ref_not_configured", "db_error", "query_timeout", "result_too_large", "schema_mismatch", "invalid_signature", "job_expired"]) {
+    assert.ok(ERROR_HELP[code], code);
+  }
+});
+
+test("the Testar button shows progress and the result banner is announced to assistive tech", () => {
+  assert.match(source, /Testando…/);
+  assert.match(source, /aria-live="polite"/);
+  assert.match(source, /bm-test-banner/);
+});
+
+test("the metric column typed in the form is trimmed before it reaches the API", () => {
+  assert.match(source, /column: String\(f\.metric_column \|\| ''\)\.trim\(\)/);
+});
+
+import {errorHelp} from "../src/business-queries-lib.js";
+
+test("SQL Server error numbers are explained in plain Portuguese", () => {
+  assert.match(errorHelp("mssql_-2146893019"), /certificado.*Confiar no certificado/);
+  assert.match(errorHelp("mssql_18456"), /usuário e a senha/);
+  assert.match(errorHelp("mssql_229"), /SELECT na view/);
+  assert.match(errorHelp("mssql_99999"), /99999/);
+  assert.match(errorHelp(undefined), /business\.log/);
+  assert.match(testMessage({revision: 1, state: "FAILED", error_code: "mssql_-2146893019"}).text, /certificado/);
+});
