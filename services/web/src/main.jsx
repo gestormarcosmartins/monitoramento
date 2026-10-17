@@ -518,6 +518,8 @@ function ActionIcon({ name }) {
     view: "M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Zm9.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
     pause: "M8 5v14M16 5v14",
     play: "m8 5 11 7-11 7V5Z",
+    test: "M9 3h6M10 3v6.2L5.2 18a2 2 0 0 0 1.8 3h10a2 2 0 0 0 1.8-3L14 9.2V3M7.5 15h9",
+    publish: "M12 17V5m-5 5 5-5 5 5M5 21h14",
     trash: "M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5",
     copy: "M8 8h11v11H8V8Zm-3 8H4V4h12v1",
     message: "M4 4h16v12H8l-4 4V4Z",
@@ -545,9 +547,10 @@ const actionIconName = (label) => {
   if (value.includes("visualizar") || value.includes("detalhe")) return "view";
   if (value.includes("excluir") || value.includes("remover") || value.includes("revogar") || value.includes("descartar")) return "trash";
   if (value.includes("inativar") || value.includes("ignorar") || value.includes("desativar") || value.includes("suspender")) return "pause";
-  if (value.includes("retomar") || value.includes("testar") || value.includes("reprocessar")) return "play";
+  if (value.includes("testar")) return "test";
+  if (value.includes("publicar")) return "publish";
+  if (value.includes("retomar") || value.includes("reprocessar")) return "play";
   if (value.includes("ativar") || value.includes("reativar") || value.includes("atender") || value.includes("executar")) return "play";
-  if (value.includes("publicar")) return "play";
   if (value.includes("revisar")) return "edit";
   if (value.includes("criar versão")) return "add";
   if (value.includes("copiar")) return "copy";
