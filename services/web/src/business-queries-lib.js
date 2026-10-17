@@ -50,6 +50,28 @@ export function testMessage(test) {
   if (test.state === 'SUCCEEDED') {
     return {tone: 'success', text: `Teste da ${rev} executado com sucesso: ${test.row_count ?? 0} linha(s) em ${test.duration_ms ?? '—'} ms. Agora você pode publicar.`};
   }
-  const help = ERROR_HELP[test.error_code] || 'Veja o código do erro e o arquivo business.log do agente.';
+  const help = errorHelp(test.error_code);
   return {tone: 'error', text: `Teste da ${rev} não passou (${test.error_code || test.state}). ${help}`};
+}
+
+// Códigos do SQL Server vêm como mssql_<número> (SqlException.Number ou HRESULT do Windows).
+const MSSQL_HELP = {
+  '-2146893019': 'O certificado do SQL Server não é confiável. No configurador do agente, marque "Confiar no certificado do servidor" (certificado autoassinado, banco na mesma máquina) e salve de novo.',
+  '-2146893022': 'O certificado do SQL Server não confere com o nome do servidor. Use o nome exato do certificado ou marque a confiança no certificado no configurador.',
+  '-2': 'A conexão com o SQL Server passou do tempo. Confira se o servidor está no ar e se a instância e a porta estão acessíveis.',
+  '18456': 'O SQL Server recusou o login. Confira o usuário e a senha do usuário de leitura (nexora_ro) no configurador do agente.',
+  '4060': 'O usuário não consegue abrir o banco configurado. Confira o nome do banco e se o usuário existe nele.',
+  '229': 'O usuário de leitura não tem permissão de SELECT na view. Peça ao DBA para conceder.',
+  '208': 'A tabela ou view da consulta não existe nesse banco (confira o schema, ex.: pub.nome_da_view).',
+  '207': 'Um nome de coluna da consulta não existe na view. Confira os nomes.',
+  '53': 'O servidor SQL não foi encontrado na rede. Confira o nome do servidor/instância no configurador.',
+  '-1': 'Não foi possível alcançar o SQL Server. Confira servidor, instância, firewall e se o serviço SQL Server Browser está ativo (instâncias nomeadas).',
+};
+
+export function errorHelp(code) {
+  if (!code) return 'Veja o código do erro e o arquivo business.log do agente.';
+  if (ERROR_HELP[code]) return ERROR_HELP[code];
+  const match = /^mssql_(-?\d+)$/.exec(code);
+  if (match) return MSSQL_HELP[match[1]] || `O SQL Server devolveu o erro ${match[1]}. Veja o arquivo business.log do agente e a documentação do código.`;
+  return 'Veja o código do erro e o arquivo business.log do agente.';
 }

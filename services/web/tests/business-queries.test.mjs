@@ -97,3 +97,14 @@ test("the Testar button shows progress and the result banner is announced to ass
 test("the metric column typed in the form is trimmed before it reaches the API", () => {
   assert.match(source, /column: String\(f\.metric_column \|\| ''\)\.trim\(\)/);
 });
+
+import {errorHelp} from "../src/business-queries-lib.js";
+
+test("SQL Server error numbers are explained in plain Portuguese", () => {
+  assert.match(errorHelp("mssql_-2146893019"), /certificado.*Confiar no certificado/);
+  assert.match(errorHelp("mssql_18456"), /usuário e a senha/);
+  assert.match(errorHelp("mssql_229"), /SELECT na view/);
+  assert.match(errorHelp("mssql_99999"), /99999/);
+  assert.match(errorHelp(undefined), /business\.log/);
+  assert.match(testMessage({revision: 1, state: "FAILED", error_code: "mssql_-2146893019"}).text, /certificado/);
+});
