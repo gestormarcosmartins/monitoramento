@@ -75,3 +75,12 @@ export function errorHelp(code) {
   if (match) return MSSQL_HELP[match[1]] || `O SQL Server devolveu o erro ${match[1]}. Veja o arquivo business.log do agente e a documentação do código.`;
   return 'Veja o código do erro e o arquivo business.log do agente.';
 }
+
+/** 300 -> "5 min (300 s)", 3600 -> "1 h (3600 s)": o valor em segundos fica sempre visível. */
+export function intervalLabel(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n % 3600 === 0) return `${n / 3600} h (${n} s)`;
+  if (n % 60 === 0) return `${n / 60} min (${n} s)`;
+  return `${n} s`;
+}

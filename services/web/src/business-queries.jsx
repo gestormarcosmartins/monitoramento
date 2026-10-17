@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {COLUMN_TYPES, columnsText, parseColumns, parseParameters, testMessage} from './business-queries-lib.js';
+import {COLUMN_TYPES, columnsText, intervalLabel, parseColumns, parseParameters, testMessage} from './business-queries-lib.js';
 
 /** Query monitors (Business Monitor v1.0): Master governance (queries, workers, sources, queues) and, for people with
  *  `business.view`, execution history and results. Every operation is authorized by the backend; this file only decides
@@ -90,7 +90,7 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
           const list = await call.current('/api/v1/master/business/monitors');
           data.items = list;
           if (segments[0] && segments[0] !== 'novo') data.detail = await call.current(`/api/v1/master/business/monitors/${segments[0]}/revisions`);
-          if (segments[0] === 'novo' || sub === 'revisao') {
+          if (segments[0] === 'novo' || sub === 'revisao' || sub === 'editar') {
             data.indicators = await call.current('/api/v1/master/business/indicators');
             data.sources = await call.current('/api/v1/master/business/data-sources');
           }
@@ -213,6 +213,41 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       </FormPage>;
     }
 
+    if (segments[0] && segments[0] !== 'novo' && sub === 'editar') {
+      if (!isMaster) return <section className="panel"><h2>Acesso não autorizado</h2><p>Somente o Master técnico edita consultas.</p></section>;
+      if (!detail || !aux.indicators || !aux.sources) return <section className="panel">{alerts}</section>;
+      const submitEdit = (event) => {
+        event.preventDefault();
+        const f = Object.fromEntries(new FormData(event.currentTarget).entries());
+        run(() => call.current(`/api/v1/master/business/monitors/${segments[0]}`, {method: 'PUT', body: JSON.stringify({
+            name: String(f.name).trim(), description: String(f.description || '').trim(), indicator_id: f.indicator_id, source_id: f.source_id,
+            interval_seconds: Number(f.interval_seconds)})}),
+          (out) => { navigate(`consultas/${segments[0]}`); });
+      };
+      return <FormPage title={`Editar consulta — ${detail.name}`} description="Nome, descrição, indicador, fonte e intervalo. Para mudar o texto SQL, as colunas ou o cálculo, crie uma nova revisão: ela passa por teste e publicação antes de valer."
+        onBack={() => navigate(`consultas/${segments[0]}`)}>
+        {alerts}
+        <form className="nexora-form" onSubmit={submitEdit} key={detail.id}>
+          <FormSection title="Identificação">
+            <Field name="name" label="Nome da consulta" defaultValue={detail.name} required minLength="3" maxLength="160"/>
+            <Field name="description" label="Descrição" defaultValue={detail.description || ''} maxLength="2000"/>
+            <Select name="indicator_id" label="Indicador alimentado" rows={aux.indicators.filter(i => i.active || i.id === detail.indicator_id)} value={detail.indicator_id} textOf={i => `${i.name} (${i.code})`} required/>
+          </FormSection>
+          <FormSection title="Execução">
+            <Select name="source_id" label="Fonte de dados (mesmo tipo de banco)" rows={aux.sources.filter(x => x.dialect === detail.dialect && (x.active || x.id === detail.source_id))} value={detail.source_id}
+              textOf={x => `${x.name} — ${x.dialect} · worker ${x.worker_name}`} required/>
+            <Field name="interval_seconds" label={`Intervalo (segundos, de 60 a 86400) — hoje ${intervalLabel(detail.interval_seconds)}`} type="number" min="60" max="86400" defaultValue={detail.interval_seconds} required/>
+            <p className="bm-context">Referência: 300 = 5 minutos · 900 = 15 minutos · 3600 = 1 hora · 86400 = 1 dia. Mudar a fonte cancela as execuções que estavam na fila.</p>
+          </FormSection>
+          <FormSection title="Consulta atual (somente leitura)">
+            <pre className="bm-sql" tabIndex="0" aria-label="Texto da consulta da revisão mais recente">{detail.revisions[0]?.query_text}</pre>
+            <p className="bm-context">Revisão mais recente: v{detail.revisions[0]?.revision} · Colunas: {columnsText(detail.revisions[0]?.column_schema).replaceAll('\n', ', ')} · Cálculo: {detail.revisions[0]?.metric?.kind}{detail.revisions[0]?.metric?.column ? ` (${detail.revisions[0].metric.column})` : ''}</p>
+            <button type="button" className="secondary" onClick={() => navigate(`consultas/${segments[0]}/revisao/nova`)}>Alterar o SQL, as colunas ou o cálculo (nova revisão)</button>
+          </FormSection>
+          <FormActions onCancel={() => navigate(`consultas/${segments[0]}`)} submitting={busy} submitLabel="Salvar alterações"/>
+        </form></FormPage>;
+    }
+
     if (segments[0] && segments[0] !== 'novo') {
       if (!detail) return <section className="panel">{alerts}</section>;
       const latest = detail.revisions[0];
@@ -231,9 +266,10 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       return <section className="panel list-page">
         <ui.PageHeader {...header(detail.name, detail.description || 'Consulta de negócio')} actions={<>
           <button type="button" className="secondary" onClick={() => navigate('consultas')}>← Voltar</button>
+          {isMaster && <button type="button" className="secondary" onClick={() => navigate(`consultas/${segments[0]}/editar`)}>Editar consulta</button>}
           {isMaster && <button type="button" className="primary" onClick={() => navigate(`consultas/${segments[0]}/revisao/nova`)}>+ Nova revisão</button>}</>}/>
         {alerts}
-        <MetricGroup items={[{label: 'Situação', value: label(detail.status)}, {label: 'Intervalo', value: `${detail.interval_seconds}s`},
+        <MetricGroup items={[{label: 'Situação', value: label(detail.status)}, {label: 'Intervalo', value: intervalLabel(detail.interval_seconds)},
           {label: 'Publicada', value: detail.published_revision ? `v${detail.published_revision}` : '—'}, {label: 'Mais recente', value: `v${detail.current_revision}`}, {label: 'Banco', value: detail.dialect}]}/>
         {isMaster && <div className="bm-row-actions" role="group" aria-label="Situação da consulta">
           {detail.status === 'ACTIVE' && <button type="button" onClick={() => navigate(`consultas/${segments[0]}/situacao/suspend`)}>Suspender</button>}
@@ -278,10 +314,11 @@ export default function BusinessQueries({page, tenantId, request, access, isMast
       {alerts}
       {!isMaster && !canView ? <p>Sem permissão para consultar monitores.</p> : <DataGrid stateKey={`business:${tenantId}:consultas`} rows={filtered}
         columns={[{key: 'name', label: 'Consulta'}, {key: 'indicator_name', label: 'Indicador'}, {key: 'status', label: 'Situação', render: r => badge(r.status)},
-          {key: 'interval_seconds', label: 'Intervalo', render: r => `${r.interval_seconds}s`}, {key: 'published_revision', label: 'Publicada', render: r => r.published_revision ? `v${r.published_revision}` : '—'},
+          {key: 'interval_seconds', label: 'Intervalo', render: r => intervalLabel(r.interval_seconds)}, {key: 'published_revision', label: 'Publicada', render: r => r.published_revision ? `v${r.published_revision}` : '—'},
           {key: 'worker_name', label: 'Worker', render: r => <>{r.worker_name} {badge(r.worker_status)}</>},
           {key: 'last_state', label: 'Última execução', render: r => r.last_state ? <>{badge(r.last_state)} <small>{fmt(r.last_finished_at)}</small></> : '—'}]}
-        actions={(r) => <button type="button" onClick={() => navigate(`consultas/${r.id}`)}>Visualizar</button>}/>}
+        actions={(r) => <><button type="button" onClick={() => navigate(`consultas/${r.id}`)}>Visualizar</button>
+          {isMaster && <button type="button" onClick={() => navigate(`consultas/${r.id}/editar`)}>Editar</button>}</>}/>}
     </ListPage>;
   }
 
