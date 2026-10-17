@@ -34,7 +34,7 @@ public sealed class BusinessWorkerHost : BackgroundService
     {
         if (!_options.BusinessEnabled) { BusinessLog.Write("Consultas de negócio desligadas neste agente (BusinessEnabled=false)."); return; }
         _logger.LogInformation("Consultas de negócio habilitadas neste agente.");
-        BusinessLog.Write($"Consultas de negócio habilitadas; {_options.BusinessSources.Length} fonte(s) configurada(s).");
+        BusinessLog.Write($"Consultas de negócio habilitadas; fonte(s) configurada(s): {string.Join(", ", _options.BusinessSources.Select(s => $"{s.Ref} -> {s.Server}/{s.Database} (usuário {s.User}, confiar no certificado: {(s.TrustServerCertificate ? "sim" : "não")})"))}.");
         while (!stop.IsCancellationRequested)
         {
             try

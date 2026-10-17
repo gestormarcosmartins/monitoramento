@@ -64,6 +64,7 @@ public static class BusinessConnection
         foreach (var value in new[] { source.Server, source.Database, source.User, password })
             if (value.Contains(';') || value.Contains('\n') || value.Contains('\r')) throw new ArgumentException("Valor de conexão inválido.");
         if (source.Dialect != "sqlserver") throw new ArgumentException("Somente SQL Server é suportado no agente.");
-        return $"Server={source.Server};Database={source.Database};User Id={source.User};Password={password};";
+        var trust = source.TrustServerCertificate ? "TrustServerCertificate=True;" : "";  // o Worker só aceita certificado autoassinado se a conexão pedir
+        return $"Server={source.Server};Database={source.Database};User Id={source.User};Password={password};{trust}";
     }
 }
