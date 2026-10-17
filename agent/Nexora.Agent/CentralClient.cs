@@ -15,8 +15,8 @@ public sealed class CentralClient
     private string[] AgentCapabilities => ["host-health", "chaveou-monitor", "postgresql-direct", "offline-queue"];
 #else
     private string[] AgentCapabilities => _options.SqlEnabled
-        ? ["host-health", "windows-services", "sql-server-direct", "offline-queue"]
-        : ["host-health", "windows-services", "offline-queue"];
+        ? ["host-health", "windows-services", "host-disk-levels", "sql-server-direct", "offline-queue"]
+        : ["host-health", "windows-services", "host-disk-levels", "offline-queue"];
 #endif
     private readonly HttpClient _http;
     private readonly AgentOptions _options;
