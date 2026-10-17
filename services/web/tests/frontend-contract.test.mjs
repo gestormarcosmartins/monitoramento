@@ -230,7 +230,7 @@ test("Testar e Publicar têm ícones diferentes entre si e do play", () => {
   assert.match(source, /includes\("publicar"\)\) return "publish"/);
   assert.doesNotMatch(source, /includes\("publicar"\)\) return "play"/);
   const icons = source.slice(source.indexOf("const paths = {"), source.indexOf("return <svg className=\"action-icon\""));
-  const path = (name) => new RegExp(`\b${name}: "([^"]+)"`).exec(icons)?.[1];
+  const path = (name) => new RegExp(" " + name + ': "([^"]+)"').exec(icons)?.[1];  // espaço antes do nome: sem depender de 
   const [play, test_, publish] = [path("play"), path("test"), path("publish")];
   assert.ok(play && test_ && publish);
   assert.equal(new Set([play, test_, publish]).size, 3);
