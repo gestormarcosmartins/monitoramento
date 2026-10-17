@@ -633,14 +633,20 @@ function AppShell({ children }) { return <div className="app-shell">{children}</
 function PageHeader({ title, description, eyebrow, actions }) {
   return <div className="shared-page-header"><div>{eyebrow && <small>{eyebrow}</small>}<h2>{title}</h2>{description && <p>{description}</p>}</div>{actions && <div className="shared-page-actions">{actions}</div>}</div>;
 }
-function MetricGroup({ items = [] }) {
-  return <section className="metric-strip" aria-label="Indicadores">{items.map((item) => <article key={item.label}><strong>{item.value}</strong><span>{item.label}</span></article>)}</section>;
+function MetricGroup({ items = [], className = "", label = "Indicadores" }) {
+  // Item com onSelect vira filtro clicável: botão com aria-pressed e estado selecionado visível.
+  return <section className={["metric-strip", className].filter(Boolean).join(" ")} aria-label={label}>{items.map((item) => {
+    const body = <><strong>{item.value}</strong><span>{item.label}</span>{item.hint && <small>{item.hint}</small>}</>;
+    return item.onSelect
+      ? <button type="button" key={item.label} className={`metric-action${item.selected ? " is-selected" : ""}`} aria-pressed={Boolean(item.selected)} onClick={item.onSelect}>{body}</button>
+      : <article key={item.label}>{body}</article>;
+  })}</section>;
 }
 function FilterBar({ title = "Filtros", actions, children }) {
   return <section className="shared-filter-bar" aria-label={title}><div className="shared-filter-heading"><strong>{title}</strong>{actions}</div><div className="shared-filter-fields">{children}</div></section>;
 }
-function ListPage({ title, description, eyebrow, actions, metrics, filters, children }) {
-  return <section className="panel list-page"><PageHeader title={title} description={description} eyebrow={eyebrow} actions={actions} />{metrics}{filters}{children}</section>;
+function ListPage({ title, description, eyebrow, actions, metrics, filters, children, className = "" }) {
+  return <section className={["panel list-page", className].filter(Boolean).join(" ")}><PageHeader title={title} description={description} eyebrow={eyebrow} actions={actions} />{metrics}{filters}{children}</section>;
 }
 function Status({ value }) {
   return (
@@ -661,12 +667,13 @@ function DataGrid({
   selectedIds = null,
   onSelectionChange,
   stateKey = "",
+  sortable = true,
 }) {
   const gridRef = useRef(null);
   const sortStorageKey = stateKey ? `nexora:grid:${stateKey}:sort` : "";
   const [sort, setSort] = useState(() => stateKey ? readSessionValue(sortStorageKey, { key: columns[0]?.key, direction: "asc" }) : { key: columns[0]?.key, direction: "asc" }),
     ordered = useMemo(
-      () =>
+      () => !sortable ? rows : // ordem e paginação definidas pelo servidor
         [...rows].sort(
           (a, b) =>
             String(a[sort.key] ?? "").localeCompare(
@@ -675,7 +682,7 @@ function DataGrid({
               { numeric: true },
             ) * (sort.direction === "asc" ? 1 : -1),
         ),
-      [rows, sort],
+      [rows, sort, sortable],
     );
   useEffect(() => {
     if (sortStorageKey) sessionStorage.setItem(sortStorageKey, JSON.stringify(sort));
@@ -736,7 +743,7 @@ function DataGrid({
                     : "none"
                 }
               >
-                <button
+                {!sortable ? c.label : <button
                   className="sort-button"
                   onClick={() =>
                     setSort((s) => ({
@@ -756,7 +763,7 @@ function DataGrid({
                         : "▼"
                       : "↕"}
                   </span>
-                </button>
+                </button>}
               </th>
             ))}
             {actions && <th className="actions-heading">Ações</th>}
@@ -2448,10 +2455,10 @@ const closeOperationalCreate = () => { const target=operationalParentViews[opera
             canAudit={isMaster || (authContext?.permissions_by_company?.[tenantId] || []).includes("notification.audit.view")}
             onOpenIncident={(incidentId) => { setView("incidents"); loadDetail({ id: incidentId }); }}
             ui={{ PageHeader, MetricGroup, ListPage, FilterBar, DataGrid, Loading, Unavailable }} />}
-          {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId}
+          {view === "business" && tenantId && <BusinessMonitor key={tenantId} tenantId={tenantId} tenantName={tenant?.name}
             access={businessAccess} isMaster={isMaster} currentUserId={currentUser?.id} onAccessChange={reloadBusinessAccess}
             request={(path,opts={})=>api(path,token,opts,tenantId)}
-            ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions}} />}
+            ui={{PageHeader,MetricGroup,ListPage,FilterBar,DataGrid,FormPage,FormSection,FormActions,Unavailable}} />}
           {view === "overview" && (
             <section className="dashboard-overview">
               <section className="dashboard-kpis">

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './business-monitor.css';
 import BusinessP1 from './business-p1.jsx';
 import BusinessQueries from './business-queries.jsx';
+import BusinessOverview from './business-overview.jsx';
 
 const ROOT = '/negocios';
 const fmt = (v) => v ? new Date(v).toLocaleString('pt-BR') : '—';
@@ -104,7 +105,7 @@ function MasterQuickGrant({request, ui}) {
   </section>;
 }
 
-export default function BusinessMonitor({tenantId, request, access, isMaster, currentUserId, onAccessChange, ui}) {
+export default function BusinessMonitor({tenantId, tenantName, request, access, isMaster, currentUserId, onAccessChange, ui}) {
   const {PageHeader, MetricGroup, ListPage, FilterBar, DataGrid, FormPage, FormSection, FormActions} = ui;
   const [page, setPage] = useState(routeName());
   const [indicators,setIndicators]=useState([]);
@@ -114,6 +115,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
   const [message,setMessage]=useState('');
   const [search,setSearch]=useState('');
   const [editing,setEditing]=useState(null);
+  const returnTo=useRef(null); // aba de origem da edição (ex.: visao-geral), para Voltar/Cancelar/Salvar
   const requestRef=useRef(request); requestRef.current=request;
   const sequence=useRef(0);
   const [,setRouteTick]=useState(0);
@@ -165,7 +167,8 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
   if (!access.enabled || !has(allowed,'business.view'))
     return <BusinessBootstrap tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} currentUserId={currentUserId} ui={ui} onDone={onAccessChange} />;
   const openNew=()=>{setEditing(null);navigate('monitoramentos/novo');};
-  const openEdit=(i)=>{setEditing(i);navigate(`monitoramentos/${i.id}/editar`);};
+  const openEdit=(i,from=null)=>{returnTo.current=from;setEditing(i);navigate(`monitoramentos/${i.id}/editar`);};
+  const backToList=()=>{const target=returnTo.current||'monitoramentos';returnTo.current=null;navigate(target);};
   const editId=window.location.pathname.match(/^\/negocios\/monitoramentos\/([^/]+)\/editar$/)?.[1];
   const indicator=editId ? indicators.find(x=>String(x.id)===decodeURIComponent(editId)) : null;
   const isForm=window.location.pathname==='/negocios/monitoramentos/novo'||Boolean(editId);
@@ -184,7 +187,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
     try {
       await requestRef.current(editable?`/api/v1/business/indicators/${indicator.id}`:'/api/v1/business/indicators',
         {method:editable?'PUT':'POST',body:JSON.stringify(data)});
-      navigate('monitoramentos');await reload();
+      backToList();await reload();
     }catch(e){setMessage(e.message||'Falha ao salvar monitoramento');setBusy(false);}
   };
   const filtered=indicators.filter(x=>`${x.name} ${x.code}`.toLowerCase().includes(search.toLowerCase()));
@@ -196,7 +199,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
     {message && message!=='ok' && <div role="alert" className="bm-error">{message}</div>}
     {busy && <p role="status">Carregando ou salvando informações...</p>}
     {isForm ? (
-      canWrite ? <FormPage title={editable?'Editar monitoramento':'Novo monitoramento de negócio'} description="Informações e limites serão avaliados apenas após uma fonte autorizada enviar dados reais." onBack={()=>navigate('monitoramentos')}>
+      canWrite ? <FormPage title={editable?'Editar monitoramento':'Novo monitoramento de negócio'} description="Informações e limites serão avaliados apenas após uma fonte autorizada enviar dados reais." onBack={backToList}>
         {(!editable||indicator) ? <form onSubmit={save} className="nexora-form" key={indicator?.id||'new'}>
           <FormSection title="Identificação do indicador">
             <label className="field"><span>Código</span><input name="code" pattern="[a-z][a-z0-9_]{2,95}" required defaultValue={indicator?.code||''}/></label>
@@ -211,7 +214,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
             <label className="field"><span>Validade da coleta (segundos)</span><input name="stale_after_seconds" type="number" min="30" max="2592000" required defaultValue={indicator?.stale_after_seconds||1800}/></label>
             {editable&&<label className="field"><span><input type="checkbox" name="active" defaultChecked={indicator?.active}/> Monitoramento ativo</span></label>}
           </FormSection>
-          <FormActions onCancel={()=>navigate('monitoramentos')} submitting={busy} submitLabel={editable?'Salvar alterações':'Criar monitoramento'}/>
+          <FormActions onCancel={backToList} submitting={busy} submitLabel={editable?'Salvar alterações':'Criar monitoramento'}/>
         </form> : <p>Registro não encontrado ou acesso insuficiente.</p>}
       </FormPage> : <p>Acesso negado para criar ou editar monitoramentos.</p>
     ) : queryPages.includes(page) ? <BusinessQueries page={page} tenantId={tenantId} request={requestRef.current} access={access} isMaster={isMaster} ui={ui} navigate={navigate}/> : ['processos','regras','conectores','unidades','notificacoes','relatorios','permissoes'].includes(page) ? <BusinessP1 page={page} tenantId={tenantId} access={access} request={requestRef.current} ui={ui} /> : page==='monitoramentos' ? <ListPage title="Monitoramentos de Negócios" eyebrow="NEXORA › BUSINESS MONITOR" description="Indicadores independentes de infraestrutura, com permissão por Empresa." actions={has(allowed,'business.monitor.create')?<button type="button" className="primary" onClick={openNew}>+ Novo monitoramento</button>:null}
@@ -230,14 +233,7 @@ export default function BusinessMonitor({tenantId, request, access, isMaster, cu
           ({pending:'Aguardando GLPI',failed:'Falha na sincronização'}[r.glpi_sync_status]||'—')},
         {key:'actions',label:'Ação',render:r=>has(allowed,'business.occurrence.manage')&&['open','acknowledged','normalized'].includes(r.state)?
           <button type="button" onClick={async()=>{setBusy(true);try{await requestRef.current(`/api/v1/business/occurrences/${r.id}/actions`,{method:'POST',body:JSON.stringify({action:r.state==='open'?'acknowledge':'close'})});await reload();}catch(e){setMessage(e.message);setBusy(false);}}}>{r.state==='open'?'Reconhecer':'Encerrar'}</button>:'—'}]}/>
-    </ListPage> : <section className="panel list-page">
-      <PageHeader eyebrow="NEXORA › BUSINESS MONITOR" title="Visão Geral de Negócios" description="Indicadores reais e autorizados da Empresa selecionada." actions={<button onClick={reload}>Atualizar</button>}/>
-      <MetricGroup items={[{label:'Indicadores',value:health?.total??'—'},
-        {label:'Normais',value:health?.counts?.normal??'—'},{label:'Em atenção',value:health?.counts?.atencao??'—'},
-        {label:'Críticos',value:health?.counts?.critico??'—'},{label:'Sem dados',value:health?.counts?.sem_dados??'—'}]}/>
-      <p className="bm-context">Exposição financeira: <b>Não calculada</b> · Última avaliação: {fmt(health?.as_of)}</p>
-      <div className="bm-cards">{indicators.map(i=><article className="bm-card" key={i.id}><div><span className={`bm-status ${i.state}`}>{statusLabels[i.state]||'—'}</span><h3>{i.name}</h3><p>{i.code}</p></div><strong>{val(i.last_value)} <small>{i.unit}</small></strong><small>Coleta: {fmt(i.last_collected_at)}</small></article>)}</div>
-      {!indicators.length&&!busy&&<p>Nenhum indicador de negócio cadastrado. Não foram criados dados demonstrativos.</p>}
-    </section>}
+    </ListPage> : <BusinessOverview tenantId={tenantId} tenantName={tenantName} request={requestRef.current} access={access} ui={ui}
+      onOpen={(item)=>openEdit(item,'visao-geral')}/>}
   </div>;
 }
