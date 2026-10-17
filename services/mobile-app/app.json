@@ -3,7 +3,7 @@
     "name": "Nexora",
     "slug": "nexora",
     "scheme": "nexora",
-    "version": "1.0.17",
+    "version": "1.0.18",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "br.com.simmservices.nexora",
-      "versionCode": 18,
+      "versionCode": 19,
       "adaptiveIcon": {
         "backgroundColor": "#0B1F3B",
         "foregroundImage": "./assets/android-icon-foreground.png",

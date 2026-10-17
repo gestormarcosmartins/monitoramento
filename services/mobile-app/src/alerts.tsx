@@ -80,9 +80,9 @@ export function useAlerts({ enabled, scope, resetKey, request }: { enabled: bool
     items, nextCursor, total, counts, failed, updatedAt, status, error, loading, reload: loadFirst, loadMore, clear };
 }
 
-function AlertCard({ item, showCompany, openTicket }: { item: AlertItem; showCompany: boolean; openTicket: (id: string, tenantId?: string) => void }) {
+export function AlertCard({ item, showCompany, openTicket, level }: { item: AlertItem; showCompany: boolean; openTicket: (id: string, tenantId?: string) => void; level?: { label: string; color: string } }) {
   const [open, setOpen] = useState(false);
-  const severity = severityLabel(item.severity_group);
+  const severity = level || severityLabel(item.severity_group);
   const where = [showCompany ? item.tenant_name : null, item.asset_name, item.monitor_name].filter(Boolean).join(' · ');
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${severity.label}, ${alertStatusLabel(item.status)}: ${item.title}`} onPress={() => setOpen(!open)} style={s.card}>
