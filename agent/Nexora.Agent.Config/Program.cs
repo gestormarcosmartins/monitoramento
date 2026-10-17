@@ -359,6 +359,9 @@ internal sealed class ConfigurationForm : Form
             await Task.Run(StopRunningAgent);  // o executável em uso trava a cópia e o processo antigo continuaria rodando
             StopAndDeleteService();
             File.Copy(sourceAgent, Path.Combine(InstallDirectory, "Nexora.Agent.exe"), true);
+            // Script que o agente aciona (tarefa NexoraAgentUpdate) para trocar o executável com período de teste e volta automática.
+            var applyScript = Path.Combine(AppContext.BaseDirectory, "apply-agent-update.ps1");
+            if (File.Exists(applyScript)) File.Copy(applyScript, Path.Combine(InstallDirectory, "apply-update.ps1"), true);
             // Microsoft.Data.SqlClient needs its native SNI library sitting next to the
             // exe at runtime; PublishSingleFile does not embed it. Without this file the
             // service enrolls and sends heartbeats fine but every SQL query throws
@@ -486,6 +489,9 @@ internal sealed class ConfigurationForm : Form
             $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
             $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
             Register-ScheduledTask -TaskName 'NexoraAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Coleta diagnosticos locais e os envia com seguranca para a Central Nexora.' -Force | Out-Null
+            $updateAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File "{Path.Combine(InstallDirectory, "apply-update.ps1")}"'
+            $updateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName 'NexoraAgentUpdate' -Action $updateAction -Principal $principal -Settings $updateSettings -Description 'Aplica a atualizacao assinada do Nexora Agent (acionada pelo proprio agente).' -Force | Out-Null
             Start-ScheduledTask -TaskName 'NexoraAgent'
             """;
         var scriptPath = Path.Combine(Path.GetTempPath(), $"nexora-install-task-{Guid.NewGuid():N}.ps1");

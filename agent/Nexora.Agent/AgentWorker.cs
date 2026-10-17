@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Nexora.Agent.Benner;
+using Nexora.BusinessWorker;
 
 namespace Nexora.Agent;
 
@@ -12,13 +13,14 @@ public sealed class AgentWorker : BackgroundService
     private readonly HostCollector _host;
     private readonly SqlServerCollector _sql;
     private readonly IBennerEngineDiagnostics _benner;
+    private readonly UpdateGate _gate;
 #if CHAVEOU_AGENT
     private readonly ChaveouMonitorCollector _chaveou;
 #endif
     private readonly HashSet<string> _processed = new(StringComparer.OrdinalIgnoreCase);
 
     public AgentWorker(CentralClient central, LocalQueue queue, IOptions<AgentOptions> options, HostCollector host, SqlServerCollector sql,
-        IBennerEngineDiagnostics benner,
+        IBennerEngineDiagnostics benner, UpdateGate gate,
 #if CHAVEOU_AGENT
         ChaveouMonitorCollector chaveou,
 #endif
@@ -30,6 +32,7 @@ public sealed class AgentWorker : BackgroundService
         _host = host;
         _sql = sql;
         _benner = benner;
+        _gate = gate;
 #if CHAVEOU_AGENT
         _chaveou = chaveou;
 #endif
@@ -73,6 +76,7 @@ public sealed class AgentWorker : BackgroundService
                 }
 #endif
                 await _central.HeartbeatAsync(health,stoppingToken);
+                _gate.MarkHealthy();  // período de teste de uma atualização: um heartbeat aceito pela Central prova que esta versão funciona
                 await CollectAsync(config, stoppingToken);
                 await FlushAsync(stoppingToken);
             }

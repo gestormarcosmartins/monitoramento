@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Nexora.BusinessWorker;
 
 namespace Nexora.Agent;
 
@@ -15,8 +16,8 @@ public sealed class CentralClient
     private string[] AgentCapabilities => ["host-health", "chaveou-monitor", "postgresql-direct", "offline-queue"];
 #else
     private string[] AgentCapabilities => _options.SqlEnabled
-        ? ["host-health", "windows-services", "sql-server-direct", "offline-queue"]
-        : ["host-health", "windows-services", "offline-queue"];
+        ? ["host-health", "windows-services", "host-disk-levels", "sql-server-direct", "offline-queue"]
+        : ["host-health", "windows-services", "host-disk-levels", "offline-queue"];
 #endif
     private readonly HttpClient _http;
     private readonly AgentOptions _options;
@@ -47,7 +48,7 @@ public sealed class CentralClient
         if (Credentials is not null) return;
         if (string.IsNullOrWhiteSpace(_options.EnrollmentToken))
             throw new InvalidOperationException("Informe Agent:EnrollmentToken ou NEXORA_ENROLLMENT_TOKEN no primeiro uso.");
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString();
+        var version = AgentVersion.Current;
         var response = await _http.PostAsJsonAsync(Uri("api/v1/agent/enroll"), new {
             enrollment_token = _options.EnrollmentToken,
             name = _options.AgentName,
@@ -64,7 +65,44 @@ public sealed class CentralClient
     public async Task HeartbeatAsync(Dictionary<string,object?> health, CancellationToken cancellationToken)
     {
         using var request = Authorized(HttpMethod.Post, "api/v1/agent/heartbeat",
-            JsonContent.Create(new { version = "2.1.0", capabilities = AgentCapabilities, heartbeat_interval_seconds = _options.HeartbeatSeconds, services_interval_seconds = _options.ServicesSeconds, health }));
+            JsonContent.Create(new { version = AgentVersion.Current, capabilities = AgentCapabilities, heartbeat_interval_seconds = _options.HeartbeatSeconds, services_interval_seconds = _options.ServicesSeconds, health }));
+        using var response = await _http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Oferta de atualização assinada para este agente, ou null quando não há (anel hold, já na versão mais nova, etc.).</summary>
+    public async Task<JobEnvelope?> CheckUpdateAsync(string platform, CancellationToken cancellationToken)
+    {
+        using var request = Authorized(HttpMethod.Get, $"api/v1/agent/update?platform={System.Uri.EscapeDataString(platform)}");
+        using var response = await _http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var offer = await response.Content.ReadFromJsonAsync<UpdateOffer>(cancellationToken: cancellationToken);
+        return offer?.Update;
+    }
+
+    /// <summary>Baixa o pacote oferecido; recusa gravar mais do que o manifesto prometeu. Cliente próprio: o padrão tem limite de 30 s.</summary>
+    public async Task DownloadUpdateAsync(string version, string platform, Stream destination, long maxBytes, CancellationToken cancellationToken)
+    {
+        using var download = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+        using var request = Authorized(HttpMethod.Get, $"api/v1/agent/releases/{System.Uri.EscapeDataString(version)}/{System.Uri.EscapeDataString(platform)}/download");
+        using var response = await download.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var buffer = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await body.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            total += read;
+            if (total > maxBytes) throw new UpdateRejectedException("size_mismatch");
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+    }
+
+    public async Task ReportUpdateAsync(string version, string status, string error, CancellationToken cancellationToken)
+    {
+        using var request = Authorized(HttpMethod.Post, "api/v1/agent/update/status",
+            JsonContent.Create(new { version, status, error = error.Length > 200 ? error[..200] : error }));
         using var response = await _http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
     }

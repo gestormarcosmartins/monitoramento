@@ -31,6 +31,12 @@ public sealed class AgentOptions
     public bool BusinessEnabled { get; set; } = false;
     public BusinessSource[] BusinessSources { get; set; } = [];
 
+    // Atualização automática (Windows). 0 desliga. O anel de cada agente é escolhido na Central: o padrão é hold (nada muda sozinho).
+    public int UpdateCheckMinutes { get; set; } = 60;
+    // Chave pública Ed25519 que assina as versões do agente (é pública por desenho; pode ser trocada na configuração).
+    public string UpdateSigningPublicKey { get; set; } = "ZvMn8efXC3RDhTIBKDIS7ioA+GX4h/buMuIK3a61LqU=";
+    public string UpdateTaskName { get; set; } = "NexoraAgentUpdate";
+
     public string ChaveouConnectionString { get; set; } = "";
     public string ChaveouTenantPublicId { get; set; } = "";
     public int ChaveouOperationalSeconds { get; set; } = 60;

@@ -36,6 +36,8 @@ from .business_monitors import master_router as business_monitor_master_router
 from .business_governance import master_router as business_governance_router
 from .business_releases import master_router as business_releases_master_router
 from .business_releases import worker_router as business_releases_worker_router
+from .agent_releases import agent_router as agent_releases_agent_router
+from .agent_releases import master_router as agent_releases_master_router
 from .business_monitors import read_router as business_monitor_read_router
 from .business_monitors import worker_router as business_worker_router
 from .consolidated_tickets import router as consolidated_tickets_router
@@ -83,6 +85,8 @@ app.include_router(business_monitor_master_router)
 app.include_router(business_governance_router)
 app.include_router(business_releases_master_router)
 app.include_router(business_releases_worker_router)
+app.include_router(agent_releases_master_router)
+app.include_router(agent_releases_agent_router)
 app.include_router(business_monitor_read_router)
 app.include_router(business_worker_router)
 # Must precede ticketing_router: "/tickets/consolidated" would otherwise match "/tickets/{ticket_id}".
