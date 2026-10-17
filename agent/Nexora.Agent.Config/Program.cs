@@ -66,6 +66,7 @@ internal sealed class ConfigurationForm : Form
     private readonly CheckBox _bizTrust = new() { Text = "Confiar no certificado do servidor (SQL Server local com certificado autoassinado)", AutoSize = true };
     private readonly Button _bizTest = new() { Text = "Testar conexão", AutoSize = true };
     private readonly BusinessSecretStore _bizSecrets = new();
+    private string _loadedBizRef = "";  // nome lógico que estava gravado ao abrir a janela
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
@@ -155,7 +156,7 @@ internal sealed class ConfigurationForm : Form
         _install.MinimumSize = new Size(140, 38);
         _test.MinimumSize = new Size(125, 38);
         _test.Click += async (_, _) => await TestConnectionAsync();
-        _install.Click += (_, _) => Install();
+        _install.Click += async (_, _) => await InstallAsync();
         actions.Controls.Add(_install);
         actions.Controls.Add(_test);
         _status.Anchor = AnchorStyles.Left;
@@ -208,6 +209,8 @@ internal sealed class ConfigurationForm : Form
                 var first = sources[0];
                 _bizRef.Text = String(first, "Ref", ""); _bizServer.Text = String(first, "Server", ""); _bizDatabase.Text = String(first, "Database", "");
                 _bizUser.Text = String(first, "User", ""); _bizTrust.Checked = Boolean(first, "TrustServerCertificate", false);
+                _loadedBizRef = _bizRef.Text;
+                try { if (_loadedBizRef != "" && _bizSecrets.Load(_loadedBizRef).Length > 0) _bizPassword.PlaceholderText = "•••••••• senha salva (deixe em branco para manter)"; } catch (Exception) { /* sem acesso ao armazenamento protegido */ }
             }
             _status.Text = "Configuração instalada carregada.";
         }
@@ -269,7 +272,7 @@ internal sealed class ConfigurationForm : Form
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(source.Ref, "^[a-z][a-z0-9_]{1,63}$")) throw new InvalidOperationException("Nome lógico inválido: use minúsculas, números e _ (ex.: jri_hub).");
         if (string.IsNullOrWhiteSpace(source.Server) || string.IsNullOrWhiteSpace(source.Database) || string.IsNullOrWhiteSpace(source.User)) throw new InvalidOperationException("Informe servidor, banco e usuário da fonte de negócio.");
-        var password = string.IsNullOrEmpty(_bizPassword.Text) ? _bizSecrets.Load(source.Ref) : _bizPassword.Text;
+        var password = EffectiveBusinessPassword(source.Ref);
         if (string.IsNullOrEmpty(password)) throw new InvalidOperationException("Informe a senha SQL da fonte de negócio.");
         var builder = new SqlConnectionStringBuilder(BusinessConnection.Build(source, password)) { Encrypt = true, TrustServerCertificate = source.TrustServerCertificate, ConnectTimeout = 12, ApplicationName = "Nexora Agent Config" };
         await using var connection = new SqlConnection(builder.ConnectionString);
@@ -280,6 +283,12 @@ internal sealed class ConfigurationForm : Form
         if (!reader.IsDBNull(2) && Convert.ToInt32(reader.GetValue(2)) == 1)
             throw new InvalidOperationException("Este usuário é administrador do SQL Server (sysadmin). Para consultas de negocio use uma conta somente leitura (ex.: nexora_ro).");
         return $"Conexão aprovada em {reader.GetString(0)} / {reader.GetString(1)} com usuário somente leitura.";
+    }
+
+    private string EffectiveBusinessPassword(string reference)
+    {
+        string Saved(string name) { try { return name == "" ? "" : _bizSecrets.Load(name); } catch (Exception) { return ""; } }
+        return BusinessPasswordChoice.Effective(_bizPassword.Text, Saved(reference), reference != _loadedBizRef ? Saved(_loadedBizRef) : "");
     }
 
     private async Task TestBusinessAsync()
@@ -326,13 +335,18 @@ internal sealed class ConfigurationForm : Form
         finally { _test.Enabled = true; }
     }
 
-    private void Install()
+    private async Task InstallAsync()
     {
+        _install.Enabled = false;
         try
         {
             var server = ValidServer();
             var businessSource = BusinessSourceFromForm();
-            if (businessSource is not null) ValidateBusinessAsync(businessSource).GetAwaiter().GetResult();  // recusa sysadmin e conexao invalida antes de instalar
+            if (businessSource is not null)
+            {
+                _status.Text = "Validando a fonte de negócio...";
+                await ValidateBusinessAsync(businessSource);  // recusa sysadmin e conexão inválida antes de instalar (await: sem bloquear a janela)
+            }
             var sourceAgent = Path.Combine(AppContext.BaseDirectory, "Nexora.Agent.exe");
             if (!File.Exists(sourceAgent)) throw new FileNotFoundException("Nexora.Agent.exe não foi encontrado ao lado do configurador.");
             var credentialsPath = Path.Combine(
@@ -341,6 +355,8 @@ internal sealed class ConfigurationForm : Form
             if (!File.Exists(credentialsPath) && string.IsNullOrWhiteSpace(enrollmentToken))
                 throw new InvalidOperationException("Informe o token de ativação no primeiro cadastro deste computador.");
             Directory.CreateDirectory(InstallDirectory);
+            _status.Text = "Parando o agente em execução...";
+            await Task.Run(StopRunningAgent);  // o executável em uso trava a cópia e o processo antigo continuaria rodando
             StopAndDeleteService();
             File.Copy(sourceAgent, Path.Combine(InstallDirectory, "Nexora.Agent.exe"), true);
             // Microsoft.Data.SqlClient needs its native SNI library sitting next to the
@@ -369,24 +385,70 @@ internal sealed class ConfigurationForm : Form
                     BennerEnabled=EffectiveSqlEnabled&&_bennerEnabled.Checked,BennerIntervalSeconds=(int)_bennerInterval.Value,
                     BennerIngestToken=string.IsNullOrWhiteSpace(_bennerIngestToken.Text)?_existingBennerIngestToken:_bennerIngestToken.Text.Trim(),
                     BennerTenantId=_bennerTenantId.Text.Trim(),
-                    BusinessEnabled = businessSource is not null,
-                    BusinessSources = businessSource is null ? Array.Empty<BusinessSource>() : new[] { businessSource }
+                    BusinessEnabled = businessSource is not null
                 }
             };
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            var existingJson = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath) : null;
+            if (existingJson is not null) File.Copy(SettingsPath, SettingsPath + ".bak", true);  // sempre guarda a configuração anterior
+            File.WriteAllText(SettingsPath, AgentSettingsMerge.Merge(existingJson, payload.Agent, businessSource, _loadedBizRef));
             if(!_integrated.Checked)SaveSqlPassword(_sqlPassword.Text);
-            if (businessSource is not null && !string.IsNullOrEmpty(_bizPassword.Text)) _bizSecrets.Save(businessSource.Ref, _bizPassword.Text);
+            if (businessSource is not null)
+            {
+                var keep = EffectiveBusinessPassword(businessSource.Ref);  // digitada, já salva ou a do nome anterior
+                if (!string.IsNullOrEmpty(keep)) _bizSecrets.Save(businessSource.Ref, keep);
+                _loadedBizRef = businessSource.Ref;
+            }
             _bizPassword.Clear();
             InstallScheduledTask(Path.Combine(InstallDirectory, "Nexora.Agent.exe"));
             _token.Clear();
+            var running = await Task.Run(() => WaitAgentRunning(20));
+            if (!running) throw new InvalidOperationException("O agente foi instalado, mas não iniciou. Abra o Agendador de Tarefas, execute a tarefa NexoraAgent e veja o resultado.");
             _status.Text = "Agente instalado e iniciado. A comunicação ocorrerá no intervalo configurado.";
             MessageBox.Show(this, "Agente Nexora instalado e iniciado com sucesso.", "Nexora Agent", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Close();  // a instalacao terminou: nao deixa a janela aberta
         }
         catch (Exception error)
         {
             _status.Text = $"Falha na instalação: {error.Message}";
             MessageBox.Show(this, error.Message, "Não foi possível instalar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+        finally { if (!IsDisposed) _install.Enabled = true; }
+    }
+
+    /// <summary>Encerra a tarefa agendada e qualquer Nexora.Agent.exe em execução; falha com mensagem clara se algum resistir.</summary>
+    private static void StopRunningAgent()
+    {
+        try
+        {
+            using var end = Process.Start(new ProcessStartInfo("schtasks.exe", $"/End /TN {ServiceName}") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true });
+            end?.WaitForExit(15000);
+        }
+        catch (Exception) { /* tarefa inexistente: primeira instalação */ }
+        foreach (var process in Process.GetProcessesByName("Nexora.Agent"))
+        {
+            using (process)
+            {
+                try { process.Kill(entireProcessTree: true); process.WaitForExit(15000); }
+                catch (Exception) when (process.HasExited) { /* já saiu */ }
+            }
+        }
+        Thread.Sleep(500);
+        if (Process.GetProcessesByName("Nexora.Agent").Length > 0)
+            throw new InvalidOperationException("Não foi possível parar o agente em execução. Encerre o processo Nexora.Agent no Gerenciador de Tarefas e tente de novo.");
+    }
+
+    private static bool WaitAgentRunning(int seconds)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            var found = Process.GetProcessesByName("Nexora.Agent");
+            var any = found.Length > 0;
+            foreach (var p in found) p.Dispose();
+            if (any) return true;
+            Thread.Sleep(1000);
+        }
+        return false;
     }
 
     private static void StopAndDeleteService()

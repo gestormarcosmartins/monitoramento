@@ -53,6 +53,20 @@ public class AgentEmbeddingTests
         Assert.Equal("Server=srv\\SQLEXPRESS;Database=JRI_HUB;User Id=nexora_ro;Password=s3cret;", BusinessConnection.Build(Source(), "s3cret"));
     }
 
+    [Fact]
+    public void Trusting_the_certificate_is_requested_in_the_connection_string_only_when_the_source_asks_for_it()
+    {
+        var trusted = Source(); trusted.TrustServerCertificate = true;
+        Assert.EndsWith("TrustServerCertificate=True;", BusinessConnection.Build(trusted, "s3cret"));
+        Assert.DoesNotContain("TrustServerCertificate", BusinessConnection.Build(Source(), "s3cret"));
+        // e o endurecimento do Worker respeita o pedido quando a opcao global esta ligada
+        var executor = new DbQueryExecutor(new WorkerOptions { AllowUntrustedServerCertificate = true });
+        var hardened = executor.Harden("sqlserver", BusinessConnection.Build(trusted, "s3cret"), 15);
+        Assert.Contains("Trust Server Certificate=True", hardened);
+        var strict = new DbQueryExecutor(new WorkerOptions { AllowUntrustedServerCertificate = false });
+        Assert.Contains("Trust Server Certificate=False", strict.Harden("sqlserver", BusinessConnection.Build(trusted, "s3cret"), 15));
+    }
+
     [Theory]
     [InlineData("srv;TrustServerCertificate=true", "JRI_HUB", "u", "p")]
     [InlineData("srv", "db;ApplicationIntent=ReadWrite", "u", "p")]
@@ -87,6 +101,13 @@ public class AgentEmbeddingTests
         var file = BusinessSecretStore.FileFor("jri_hub");
         Assert.StartsWith(BusinessSecretStore.Directory, file);
         Assert.EndsWith("jri_hub.dat", file);
+    }
+
+    [Fact]
+    public void Business_log_goes_to_the_agent_logs_folder_and_never_throws()
+    {
+        Assert.EndsWith(Path.Combine("Nexora", "Agent", "logs", "business.log"), BusinessLog.FilePath);
+        BusinessLog.Write("teste");  // pode gravar ou nao (permissao), mas nunca lanca excecao
     }
 
     [Fact]
