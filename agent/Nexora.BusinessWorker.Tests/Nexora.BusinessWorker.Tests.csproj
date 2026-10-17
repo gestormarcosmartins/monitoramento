@@ -20,6 +20,7 @@
     <Compile Include="..\Nexora.Agent\BusinessSupport.cs" />
     <Compile Include="..\Nexora.Agent\AgentOptions.cs" />
     <Compile Include="..\Nexora.Agent\DiskLevels.cs" />
+    <Compile Include="..\Nexora.Agent\AgentUpdate.cs" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>

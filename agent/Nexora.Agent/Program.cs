@@ -1,5 +1,11 @@
+using Microsoft.Extensions.Options;
 using Nexora.Agent;
 using Nexora.Agent.Benner;
+using Nexora.BusinessWorker;
+
+// Comandos usados pelo script de aplicação da atualização (rodam e saem, sem subir o agente):
+if (args.Length >= 1 && args[0] == "--version") { Console.WriteLine(AgentVersion.Current); return 0; }
+if (args.Length >= 2 && args[0] == "--verify-staged") return VerifyStagedCommand(args[1]);
 
 var builder = Host.CreateApplicationBuilder(args);
 // Nexora.Agent.Config writes the settings a human edits to agentsettings.json next to
@@ -41,6 +47,21 @@ builder.Services.AddSingleton<LocalQueue>();
 builder.Services.AddSingleton<ChaveouMonitorCollector>();
 #endif
 builder.Services.AddSingleton<BusinessSecretStore>();
+builder.Services.AddSingleton<UpdateGate>();
+builder.Services.AddHostedService<AgentUpdateService>();  // só age no Windows e com UpdateCheckMinutes > 0; o anel padrão (hold) não recebe nada
 builder.Services.AddHostedService<BusinessWorkerHost>();  // sai na hora se AgentOptions.BusinessEnabled for false
 builder.Services.AddHostedService<AgentWorker>();
 await builder.Build().RunAsync();
+return 0;
+
+// "ok" ou um código estável: assinatura, vínculo a esta empresa/agente, hash e tamanho do pacote preparado.
+static int VerifyStagedCommand(string updatesDirectory)
+{
+    var configuration = new ConfigurationBuilder().AddJsonFile(Path.Combine(AppContext.BaseDirectory, "agentsettings.json"), optional: true).Build();
+    var options = configuration.GetSection("Agent").Get<AgentOptions>() ?? new AgentOptions();
+    var credentials = new CredentialStore(Options.Create(options)).Load();
+    var verdict = credentials is null ? "no_credentials" : AgentUpdateVerifier.VerifyStaged(Path.Combine(updatesDirectory, "ready"), options.UpdateSigningPublicKey,
+        Guid.Parse(credentials.TenantId), Guid.Parse(credentials.AgentId), AgentVersion.Current, UpdateStager.CurrentPlatform(), DateTimeOffset.UtcNow);
+    Console.WriteLine(verdict);
+    return verdict == "ok" ? 0 : 3;
+}
