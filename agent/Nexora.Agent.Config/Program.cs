@@ -66,6 +66,7 @@ internal sealed class ConfigurationForm : Form
     private readonly CheckBox _bizTrust = new() { Text = "Confiar no certificado do servidor (SQL Server local com certificado autoassinado)", AutoSize = true };
     private readonly Button _bizTest = new() { Text = "Testar conexão", AutoSize = true };
     private readonly BusinessSecretStore _bizSecrets = new();
+    private string _loadedBizRef = "";  // nome lógico que estava gravado ao abrir a janela
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(55, 71, 89) };
     private readonly Button _install = new() { Text = "Salvar e instalar", AutoSize = true };
     private readonly Button _test = new() { Text = "Testar conexão", AutoSize = true };
@@ -208,6 +209,8 @@ internal sealed class ConfigurationForm : Form
                 var first = sources[0];
                 _bizRef.Text = String(first, "Ref", ""); _bizServer.Text = String(first, "Server", ""); _bizDatabase.Text = String(first, "Database", "");
                 _bizUser.Text = String(first, "User", ""); _bizTrust.Checked = Boolean(first, "TrustServerCertificate", false);
+                _loadedBizRef = _bizRef.Text;
+                try { if (_loadedBizRef != "" && _bizSecrets.Load(_loadedBizRef).Length > 0) _bizPassword.PlaceholderText = "•••••••• senha salva (deixe em branco para manter)"; } catch (Exception) { /* sem acesso ao armazenamento protegido */ }
             }
             _status.Text = "Configuração instalada carregada.";
         }
@@ -269,7 +272,7 @@ internal sealed class ConfigurationForm : Form
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(source.Ref, "^[a-z][a-z0-9_]{1,63}$")) throw new InvalidOperationException("Nome lógico inválido: use minúsculas, números e _ (ex.: jri_hub).");
         if (string.IsNullOrWhiteSpace(source.Server) || string.IsNullOrWhiteSpace(source.Database) || string.IsNullOrWhiteSpace(source.User)) throw new InvalidOperationException("Informe servidor, banco e usuário da fonte de negócio.");
-        var password = string.IsNullOrEmpty(_bizPassword.Text) ? _bizSecrets.Load(source.Ref) : _bizPassword.Text;
+        var password = EffectiveBusinessPassword(source.Ref);
         if (string.IsNullOrEmpty(password)) throw new InvalidOperationException("Informe a senha SQL da fonte de negócio.");
         var builder = new SqlConnectionStringBuilder(BusinessConnection.Build(source, password)) { Encrypt = true, TrustServerCertificate = source.TrustServerCertificate, ConnectTimeout = 12, ApplicationName = "Nexora Agent Config" };
         await using var connection = new SqlConnection(builder.ConnectionString);
@@ -280,6 +283,12 @@ internal sealed class ConfigurationForm : Form
         if (!reader.IsDBNull(2) && Convert.ToInt32(reader.GetValue(2)) == 1)
             throw new InvalidOperationException("Este usuário é administrador do SQL Server (sysadmin). Para consultas de negocio use uma conta somente leitura (ex.: nexora_ro).");
         return $"Conexão aprovada em {reader.GetString(0)} / {reader.GetString(1)} com usuário somente leitura.";
+    }
+
+    private string EffectiveBusinessPassword(string reference)
+    {
+        string Saved(string name) { try { return name == "" ? "" : _bizSecrets.Load(name); } catch (Exception) { return ""; } }
+        return BusinessPasswordChoice.Effective(_bizPassword.Text, Saved(reference), reference != _loadedBizRef ? Saved(_loadedBizRef) : "");
     }
 
     private async Task TestBusinessAsync()
@@ -376,13 +385,19 @@ internal sealed class ConfigurationForm : Form
                     BennerEnabled=EffectiveSqlEnabled&&_bennerEnabled.Checked,BennerIntervalSeconds=(int)_bennerInterval.Value,
                     BennerIngestToken=string.IsNullOrWhiteSpace(_bennerIngestToken.Text)?_existingBennerIngestToken:_bennerIngestToken.Text.Trim(),
                     BennerTenantId=_bennerTenantId.Text.Trim(),
-                    BusinessEnabled = businessSource is not null,
-                    BusinessSources = businessSource is null ? Array.Empty<BusinessSource>() : new[] { businessSource }
+                    BusinessEnabled = businessSource is not null
                 }
             };
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            var existingJson = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath) : null;
+            if (existingJson is not null) File.Copy(SettingsPath, SettingsPath + ".bak", true);  // sempre guarda a configuração anterior
+            File.WriteAllText(SettingsPath, AgentSettingsMerge.Merge(existingJson, payload.Agent, businessSource, _loadedBizRef));
             if(!_integrated.Checked)SaveSqlPassword(_sqlPassword.Text);
-            if (businessSource is not null && !string.IsNullOrEmpty(_bizPassword.Text)) _bizSecrets.Save(businessSource.Ref, _bizPassword.Text);
+            if (businessSource is not null)
+            {
+                var keep = EffectiveBusinessPassword(businessSource.Ref);  // digitada, já salva ou a do nome anterior
+                if (!string.IsNullOrEmpty(keep)) _bizSecrets.Save(businessSource.Ref, keep);
+                _loadedBizRef = businessSource.Ref;
+            }
             _bizPassword.Clear();
             InstallScheduledTask(Path.Combine(InstallDirectory, "Nexora.Agent.exe"));
             _token.Clear();
