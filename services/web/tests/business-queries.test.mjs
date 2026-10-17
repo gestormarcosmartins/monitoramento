@@ -108,3 +108,24 @@ test("SQL Server error numbers are explained in plain Portuguese", () => {
   assert.match(errorHelp(undefined), /business\.log/);
   assert.match(testMessage({revision: 1, state: "FAILED", error_code: "mssql_-2146893019"}).text, /certificado/);
 });
+
+import {intervalLabel} from "../src/business-queries-lib.js";
+
+test("a consulta pode ser editada em página própria, com o SQL somente leitura e nova revisão para alterá-lo", () => {
+  assert.match(source, /consultas\/\$\{segments\[0\]\}\/editar/);
+  assert.match(source, /method: 'PUT'/);
+  assert.match(source, /Editar consulta/);
+  assert.match(source, /nova revisão/);
+  const edit = source.slice(source.indexOf("segments[0] !== 'novo' && sub === 'editar'"), source.indexOf("const latest = detail.revisions[0]"));
+  assert.doesNotMatch(edit, /name="query"|name="columns"|name="metric/);   // o SQL não se edita aqui
+  assert.match(edit, /Somente o Master/);
+});
+
+test("intervalo legível: segundos sempre visíveis", () => {
+  assert.equal(intervalLabel(300), "5 min (300 s)");
+  assert.equal(intervalLabel(3600), "1 h (3600 s)");
+  assert.equal(intervalLabel(90), "90 s");
+  assert.equal(intervalLabel(86400), "24 h (86400 s)");
+  assert.equal(intervalLabel(null), "—");
+  assert.equal(intervalLabel("x"), "—");
+});

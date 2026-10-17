@@ -397,6 +397,67 @@ def create_monitor(payload: MonitorCreate, tenant_id: str = Depends(tenant_heade
     return {**monitor, "revision": 1, "revision_state": "DRAFT"}
 
 
+class MonitorEdit(BaseModel):
+    """Dados cadastrais da consulta. O texto SQL, as colunas e a métrica só mudam por NOVA REVISÃO (rascunho, teste, publicação)."""
+    name: str = Field(min_length=3, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    indicator_id: UUID
+    source_id: UUID
+    interval_seconds: int = Field(ge=60, le=86400)
+
+
+def monitor_changes(current: dict[str, Any], payload: MonitorEdit) -> list[str]:
+    """Nomes dos campos que mudaram (auditoria e efeitos colaterais)."""
+    changed = []
+    if current["name"] != payload.name: changed.append("name")
+    if (current["description"] or "") != payload.description: changed.append("description")
+    if str(current["indicator_id"]) != str(payload.indicator_id): changed.append("indicator_id")
+    if str(current["source_id"]) != str(payload.source_id): changed.append("source_id")
+    if int(current["interval_seconds"]) != payload.interval_seconds: changed.append("interval_seconds")
+    return changed
+
+
+def source_move_allowed(current_dialect: str, new_dialect: str) -> bool:
+    """As revisões foram validadas para um dialeto; trocar de fonte só é seguro dentro do mesmo dialeto."""
+    return current_dialect == new_dialect
+
+
+@master_router.put("/monitors/{monitor_id}")
+def update_monitor(monitor_id: UUID, payload: MonitorEdit, tenant_id: str = Depends(tenant_header),
+                   identity: Identity = Depends(current_identity)):
+    actor = _master(identity, tenant_id)
+    try:
+        with tenant_connection(tenant_id) as db:
+            current = db.execute("""SELECT m.name,m.description,m.indicator_id,m.source_id,m.interval_seconds,s.dialect
+                FROM cm_business_monitors m JOIN cm_business_data_sources s ON s.tenant_id=m.tenant_id AND s.id=m.source_id
+                WHERE m.tenant_id=%s AND m.id=%s FOR UPDATE OF m""", (tenant_id, monitor_id)).fetchone()
+            if not current:
+                raise HTTPException(404, "Monitor not found")
+            changes = monitor_changes(current, payload)
+            if not changes:
+                return {"id": str(monitor_id), "changed": []}
+            if "indicator_id" in changes and not db.execute(
+                    "SELECT 1 FROM cm_business_indicators WHERE tenant_id=%s AND id=%s AND active", (tenant_id, payload.indicator_id)).fetchone():
+                raise HTTPException(404, "Indicator not found")
+            if "source_id" in changes:
+                target = db.execute("SELECT dialect FROM cm_business_data_sources WHERE tenant_id=%s AND id=%s AND active",
+                                    (tenant_id, payload.source_id)).fetchone()
+                if not target:
+                    raise HTTPException(404, "Data source not found")
+                if not source_move_allowed(current["dialect"], target["dialect"]):
+                    raise HTTPException(422, "The new data source uses a different database type")
+            db.execute("""UPDATE cm_business_monitors SET name=%s,description=%s,indicator_id=%s,source_id=%s,interval_seconds=%s,updated_at=now()
+                WHERE tenant_id=%s AND id=%s""", (payload.name, payload.description, payload.indicator_id, payload.source_id,
+                                                  payload.interval_seconds, tenant_id, monitor_id))
+            if "source_id" in changes:  # o que estava na fila foi endereçado à fonte antiga
+                db.execute("""UPDATE cm_business_executions SET state='CANCELED',finished_at=now(),error_code='source_changed'
+                    WHERE tenant_id=%s AND monitor_id=%s AND state IN ('PENDING','LEASED')""", (tenant_id, monitor_id))
+            _audit(db, tenant_id, actor["id"], "update", "business_monitor", monitor_id, {"changed": changes})
+    except UniqueViolation as error:
+        raise HTTPException(409, "A monitor with this name already exists") from error
+    return {"id": str(monitor_id), "changed": changes}
+
+
 @master_router.post("/monitors/{monitor_id}/revisions", status_code=201)
 def new_revision(monitor_id: UUID, payload: RevisionBody, tenant_id: str = Depends(tenant_header),
                  identity: Identity = Depends(current_identity)):
