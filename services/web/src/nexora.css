@@ -1401,6 +1401,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .row-actions .grid-action-trash, .row-actions .grid-action-trash.danger { color: #ef172e; border-color: #fee2e2; background: #fff1f2; }
 .row-actions .grid-action-trash:hover, .row-actions .grid-action-trash.danger:hover { border-color: #fda4af; background: #ffe4e6; color: #dc071d; }
 .row-actions .grid-action-play { color: #15803d; background: #f0fdf4; }
+.row-actions .grid-action-test { color: #1d4ed8; background: #eff6ff; }
+.row-actions .grid-action-publish { color: #6d28d9; background: #f5f3ff; }
 .row-actions .grid-action-pause { color: #9a6700; background: #fffbeb; }
 .status.ativo, .status.active { background: #dcfce7; color: #166534; }
 .status.inativo, .status.inactive { background: #f1f5f9; color: #475569; }
