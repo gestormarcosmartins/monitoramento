@@ -25,3 +25,11 @@ ALTER TABLE cm_agents
     ADD COLUMN IF NOT EXISTS update_version text,
     ADD COLUMN IF NOT EXISTS update_error text,
     ADD COLUMN IF NOT EXISTS update_reported_at timestamptz;
+
+-- A aplicação (central_app) não é dona das tabelas: o acesso é concedido explicitamente, como nas demais migrações de tabelas novas.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'central_app') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON cm_agent_releases TO central_app;
+    END IF;
+END $$;

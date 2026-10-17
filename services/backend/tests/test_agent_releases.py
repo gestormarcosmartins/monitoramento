@@ -51,6 +51,10 @@ class OfferTests(unittest.TestCase):
         migration = (Path(__file__).resolve().parents[1] / "central_monitor" / "migrations" / "057_agent_releases.sql").read_text(encoding="utf-8")
         self.assertIn("update_ring text NOT NULL DEFAULT 'hold'", migration)
 
+    def test_the_app_role_is_granted_access_to_the_new_table(self):
+        migration = (Path(__file__).resolve().parents[1] / "central_monitor" / "migrations" / "057_agent_releases.sql").read_text(encoding="utf-8")
+        self.assertIn("GRANT SELECT, INSERT, UPDATE, DELETE ON cm_agent_releases TO central_app", migration)
+
     def test_hold_ring_gets_no_offer_and_canary_gets_canary_and_stable(self):
         releases = [release("2.2.1", "canary"), release("2.2.0", "stable")]
         self.assertIsNone(ar.select_update("hold", "2.1.0", releases))
