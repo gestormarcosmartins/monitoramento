@@ -146,12 +146,13 @@ public sealed class HostCollector
 
         AddSafe("host-memory", () => { var memory=Memory(); return memory is null ? null : (memory.Value.LoadPercent<90, $"Uso de memória: {memory.Value.LoadPercent}%"); });
 
-        AddSafe("host-disk", () => {
-            var drives = DriveInfo.GetDrives().Where(d => d.IsReady).ToArray();
-            if (drives.Length == 0) return null;
-            var low = drives.Where(d => d.AvailableFreeSpace * 100d / Math.Max(1, d.TotalSize) < 10).Select(d => d.Name).ToArray();
-            return (low.Length == 0, low.Length == 0 ? "Espaço em disco normal em todas as unidades" : $"Pouco espaço livre: {string.Join(", ", low)}");
-        });
+        // Dois níveis (DiskLevels): crítico abaixo de 10% livre (host-disk) e atenção entre 10% e 20% (host-disk-warning).
+        (bool ok, string message)? DiskCheck(Func<IEnumerable<DiskLevels.Drive>, (bool ok, string message)> level) {
+            var drives = DriveInfo.GetDrives().Where(d => d.IsReady).Select(d => new DiskLevels.Drive(d.Name, d.TotalSize, d.AvailableFreeSpace)).ToArray();
+            return drives.Length == 0 ? null : level(drives);
+        }
+        AddSafe("host-disk", () => DiskCheck(DiskLevels.Critical));
+        AddSafe("host-disk-warning", () => DiskCheck(DiskLevels.Warning));
 
         AddSafe("host-services", () => {
             var serviceNames = essentialServiceNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();

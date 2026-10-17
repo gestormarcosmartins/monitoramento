@@ -120,6 +120,32 @@ _HOST_MONITORS = (
 )
 
 
+# Nível "atenção" do disco (10% a 20% livre). Só é criado para agentes que declaram a capacidade host-disk-levels,
+# para que agentes antigos não ganhem um monitor eternamente "sem dados".
+_DISK_WARNING_MONITOR = ("host-disk-warning", "Espaço em disco (atenção)", "warning", 300)
+
+
+def _ensure_disk_warning_monitor(connection: Any, tenant_id: str, agent_name: str, create_asset: bool = True) -> None:
+    """Cria o monitor de atenção do disco se faltar. Nunca reativa um monitor (nem um ativo) que alguém inativou."""
+    code, label, severity, interval_seconds = _DISK_WARNING_MONITOR
+    name = f"{agent_name} - {label}"
+    if connection.execute("SELECT 1 FROM cm_monitors WHERE tenant_id=%s AND name=%s", (tenant_id, name)).fetchone():
+        return
+    if create_asset:
+        asset_id = _ensure_asset(connection, tenant_id, agent_name)["id"]
+    else:  # sinal de vida: só usa o ambiente que já existe, sem recriar nem reativar
+        row = connection.execute("SELECT id FROM cm_assets WHERE tenant_id=%s AND name=%s", (tenant_id, agent_name)).fetchone()
+        if not row:
+            return
+        asset_id = row["id"]
+    connection.execute(
+        """INSERT INTO cm_monitors(tenant_id,asset_id,name,monitor_type,configuration,interval_seconds,severity,active,last_status,last_message)
+        VALUES (%s,%s,%s,'push',%s,%s,%s,true,'unknown','Aguardando primeiro envio do agente.')
+        ON CONFLICT(tenant_id,name) DO NOTHING""",
+        (tenant_id, asset_id, name, Jsonb({"source": "windows-agent-direct", "code": f"{code}:{agent_name}"}), interval_seconds, severity),
+    )
+
+
 def _ensure_asset(connection: Any, tenant_id: str, agent_name: str) -> Any:
     """One environment per agent (machine), shared by its host and SQL monitors."""
     return connection.execute(
@@ -194,6 +220,8 @@ def enroll(payload: EnrollRequest) -> dict[str, Any]:
             _ensure_host_monitors(connection, tenant_id, payload.name)
         if "sql-server-direct" in payload.capabilities:
             _ensure_sql_monitors(connection, tenant_id, payload.name)
+        if "host-disk-levels" in payload.capabilities:
+            _ensure_disk_warning_monitor(connection, tenant_id, payload.name)
     agent_id = agent.pop("id")
     return {**agent, "agent_id": agent_id, "agent_token": agent_token, "server_url": get_settings().central_public_url}
 
@@ -254,6 +282,8 @@ def heartbeat(payload: HeartbeatRequest, agent: dict[str, Any] = Depends(agent_i
     tenant_id = str(agent["tenant_id"])
     with tenant_connection(tenant_id) as connection:
         connection.execute("UPDATE cm_agents SET status='online',version=COALESCE(%s,version),capabilities=%s,last_health=%s,heartbeat_interval_seconds=%s,services_interval_seconds=%s,last_seen_at=now(),updated_at=now() WHERE tenant_id=%s AND id=%s",(payload.version,Jsonb(payload.capabilities),Jsonb(payload.health),payload.heartbeat_interval_seconds,payload.services_interval_seconds,tenant_id,agent["id"]))
+        if "host-disk-levels" in payload.capabilities:
+            _ensure_disk_warning_monitor(connection, tenant_id, agent["name"], create_asset=False)
     return {"status":"ok","server_time":datetime.now(UTC),"next_heartbeat_seconds":60}
 
 
